@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+*.so
+dist/
+build/
+.coverage
+
+# Rust
+crates/*/target/
+
+# Uploads (user data)
+uploads/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Environment
+.env
+.venv/
