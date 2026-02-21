@@ -193,17 +193,22 @@ class Client:
     # --- Gateway ---
 
     async def connect_gateway(self, **kwargs: Any) -> Any:
-        """Connect to the WebSocket gateway.
+        """Create a gateway client ready to connect.
 
         Fetches the gateway URL from the server's discovery endpoint
-        before establishing the WebSocket connection.
+        and returns a :class:`GatewayClient`.  The caller decides how
+        to run it::
+
+            gw = await client.connect_gateway()
+            await gw.run()                        # blocking
+            asyncio.create_task(gw.run())          # background
+            await gw.connect_in_background()       # background, waits for READY
         """
         from vox_sdk.gateway import GatewayClient
         if self.http.token is None:
             raise RuntimeError("Must be logged in before connecting to gateway")
         info = await self.server.gateway_info()
         self._gateway = GatewayClient(info.url, self.http.token, **kwargs)
-        await self._gateway.run()
         return self._gateway
 
     # --- Context manager ---
