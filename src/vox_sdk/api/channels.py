@@ -12,9 +12,12 @@ from vox_sdk.models.channels import (
     ThreadListResponse,
     ThreadResponse,
 )
+from vox_sdk.models.enums import FeedType, RoomType
 
 if TYPE_CHECKING:
     from vox_sdk.http import HTTPClient
+
+_UNSET: Any = object()
 
 
 class ChannelsAPI:
@@ -30,7 +33,7 @@ class ChannelsAPI:
     async def create_feed(
         self,
         name: str,
-        type: str = "text",
+        type: FeedType = FeedType.text,
         *,
         category_id: int | None = None,
         permission_overrides: list[dict] | None = None,
@@ -44,13 +47,23 @@ class ChannelsAPI:
         return FeedResponse.model_validate(r.json())
 
     async def update_feed(
-        self, feed_id: int, *, name: str | None = None, topic: str | None = None
+        self,
+        feed_id: int,
+        *,
+        name: str | None = None,
+        topic: str | None = None,
+        category_id: int | None = _UNSET,
+        position: int | None = None,
     ) -> FeedResponse:
         payload: dict[str, Any] = {}
         if name is not None:
             payload["name"] = name
         if topic is not None:
             payload["topic"] = topic
+        if category_id is not _UNSET:
+            payload["category_id"] = category_id
+        if position is not None:
+            payload["position"] = position
         r = await self._http.patch(f"/api/v1/feeds/{feed_id}", json=payload)
         return FeedResponse.model_validate(r.json())
 
@@ -72,7 +85,7 @@ class ChannelsAPI:
     async def create_room(
         self,
         name: str,
-        type: str = "voice",
+        type: RoomType = RoomType.voice,
         *,
         category_id: int | None = None,
         permission_overrides: list[dict] | None = None,
@@ -85,10 +98,21 @@ class ChannelsAPI:
         r = await self._http.post("/api/v1/rooms", json=payload)
         return RoomResponse.model_validate(r.json())
 
-    async def update_room(self, room_id: int, *, name: str | None = None) -> RoomResponse:
+    async def update_room(
+        self,
+        room_id: int,
+        *,
+        name: str | None = None,
+        category_id: int | None = _UNSET,
+        position: int | None = None,
+    ) -> RoomResponse:
         payload: dict[str, Any] = {}
         if name is not None:
             payload["name"] = name
+        if category_id is not _UNSET:
+            payload["category_id"] = category_id
+        if position is not None:
+            payload["position"] = position
         r = await self._http.patch(f"/api/v1/rooms/{room_id}", json=payload)
         return RoomResponse.model_validate(r.json())
 

@@ -27,6 +27,7 @@ from vox_sdk.models.bots import (
     WebhookListWrapper,
     WebhookResponse,
 )
+from vox_sdk.models.enums import DMPermission, FeedType, OverrideTargetType, RoomType
 from vox_sdk.models.channels import (
     CategoryListResponse,
     CategoryResponse,
@@ -118,6 +119,11 @@ __all__ = [
     "VoxModel",
     "ErrorCode",
     "ErrorResponse",
+    # enums
+    "DMPermission",
+    "FeedType",
+    "OverrideTargetType",
+    "RoomType",
     # auth
     "LoginResponse",
     "MFARequiredResponse",

@@ -1,4 +1,5 @@
 from vox_sdk.models.base import VoxModel
+from vox_sdk.models.enums import FeedType, OverrideTargetType, RoomType
 
 
 class ServerInfoResponse(VoxModel):
@@ -9,7 +10,7 @@ class ServerInfoResponse(VoxModel):
 
 
 class PermissionOverrideData(VoxModel):
-    target_type: str
+    target_type: OverrideTargetType
     target_id: int
     allow: int
     deny: int
@@ -18,17 +19,19 @@ class PermissionOverrideData(VoxModel):
 class FeedInfo(VoxModel):
     feed_id: int
     name: str
-    type: str
+    type: FeedType
     topic: str | None = None
     category_id: int | None = None
+    position: int = 0
     permission_overrides: list[PermissionOverrideData] = []
 
 
 class RoomInfo(VoxModel):
     room_id: int
     name: str
-    type: str
+    type: RoomType
     category_id: int | None = None
+    position: int = 0
     permission_overrides: list[PermissionOverrideData] = []
 
 

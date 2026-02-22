@@ -1,6 +1,7 @@
 from typing import Any
 
 from vox_sdk.models.base import VoxModel
+from vox_sdk.models.enums import DMPermission
 
 
 class UserResponse(VoxModel):
@@ -28,7 +29,7 @@ class FriendListResponse(VoxModel):
 
 
 class DMSettingsResponse(VoxModel):
-    dm_permission: str
+    dm_permission: DMPermission
 
 
 class PresenceResponse(VoxModel):

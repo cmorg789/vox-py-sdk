@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from vox_sdk.models.enums import DMPermission
 from vox_sdk.models.users import (
     BlockListResponse,
     DMSettingsResponse,
@@ -82,7 +83,7 @@ class UsersAPI:
         r = await self._http.get(f"/api/v1/users/{user_id}/dm-settings")
         return DMSettingsResponse.model_validate(r.json())
 
-    async def update_dm_settings(self, user_id: int, dm_permission: str) -> DMSettingsResponse:
+    async def update_dm_settings(self, user_id: int, dm_permission: DMPermission) -> DMSettingsResponse:
         r = await self._http.patch(
             f"/api/v1/users/{user_id}/dm-settings", json={"dm_permission": dm_permission}
         )
