@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   build-media:
@@ -52,6 +53,7 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist
           manylinux: off
+          sccache: true
           working-directory: crates/vox-media
 
       - uses: actions/upload-artifact@v4
@@ -92,3 +94,28 @@ jobs:
         with:
           files: artifacts/*
           generate_release_notes: true
+
+  publish:
+    name: Publish to GitHub Packages
+    needs: [build-media, build-sdk]
+    runs-on: ubuntu-latest
+    environment:
+      name: github-packages
+      url: https://github.com/cmorg789/vox-py-sdk/packages
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - run: pip install twine
+
+      - name: Publish wheels to GitHub Packages
+        run: twine upload --repository-url https://upload.pypi.pkg.github.com/cmorg789/ artifacts/*.whl
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
