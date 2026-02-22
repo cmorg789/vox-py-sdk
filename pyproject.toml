@@ -22,17 +22,11 @@ dev = [
     "ruff>=0.6",
 ]
 media = [
-    "maturin>=1.7",
+    "vox-media",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.maturin]
-python-source = "src"
-module-name = "vox_sdk._media"
-manifest-path = "crates/vox-media/Cargo.toml"
-features = ["pyo3/extension-module"]
 
 [tool.ruff]
 target-version = "py311"

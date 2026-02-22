@@ -266,7 +266,7 @@ impl VoxMediaClient {
 
 /// Python module definition.
 #[pymodule]
-fn _media(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn vox_media(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<VoxMediaClient>()?;
     Ok(())
 }
