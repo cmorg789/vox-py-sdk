@@ -54,11 +54,12 @@ jobs:
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter python3.13 python3.14
-          manylinux: manylinux_2_28
+          manylinux: manylinux_2_34
           sccache: true
           working-directory: crates/vox-media
           before-script-linux: |
-            dnf install -y nasm opus-devel dav1d-devel
+            dnf install -y epel-release
+            dnf install -y nasm opus-devel libdav1d-devel pkg-config
 
       - uses: actions/upload-artifact@v4
         with:
