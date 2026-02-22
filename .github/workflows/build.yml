@@ -54,19 +54,11 @@ jobs:
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --interpreter python3.13 python3.14
-          manylinux: auto
+          manylinux: manylinux_2_28
           sccache: true
           working-directory: crates/vox-media
           before-script-linux: |
-            curl -L https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/nasm-2.16.03.tar.xz | tar xJ
-            cd nasm-2.16.03 && ./configure --prefix=/usr && make -j$(nproc) install && cd ..
-            yum install -y opus-devel
-            curl -L https://code.videolan.org/videolan/dav1d/-/archive/1.5.1/dav1d-1.5.1.tar.bz2 | tar xj
-            cd dav1d-1.5.1
-            pip install meson ninja
-            meson setup build --default-library=static --prefix=/usr
-            ninja -C build install
-            cd ..
+            dnf install -y nasm opus-devel dav1d-devel
 
       - uses: actions/upload-artifact@v4
         with:
