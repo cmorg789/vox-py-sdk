@@ -18,10 +18,6 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-          - os: macos-latest
-            target: x86_64-apple-darwin
           - os: macos-latest
             target: aarch64-apple-darwin
           - os: windows-latest
@@ -55,12 +51,13 @@ jobs:
           working-directory: crates/vox-media
           before-script-linux: >
             yum install -y pkgconfig nasm alsa-lib-devel &&
+            cd /tmp &&
             curl -sL https://github.com/xiph/opus/releases/download/v1.5.2/opus-1.5.2.tar.gz | tar xz &&
-            cd opus-1.5.2 && ./configure --prefix=/usr && make -j$(nproc) && make install && cd .. &&
+            cd opus-1.5.2 && ./configure --prefix=/usr && make -j$(nproc) && make install && cd /tmp &&
             curl -sL https://code.videolan.org/videolan/dav1d/-/archive/1.5.1/dav1d-1.5.1.tar.bz2 | tar xj &&
             pip install meson ninja &&
             cd dav1d-1.5.1 && meson setup build --prefix=/usr --default-library=static --buildtype=release &&
-            ninja -C build && ninja -C build install && cd ..
+            ninja -C build && ninja -C build install
 
       - uses: actions/upload-artifact@v4
         with:
