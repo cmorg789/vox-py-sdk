@@ -6,11 +6,10 @@ on:
 
 permissions:
   contents: write
-  actions: write
 
 jobs:
   build-media:
-    name: "vox-media (${{ matrix.os }} ${{ matrix.target }})"
+    name: "vox-media (${{ matrix.os }})"
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -28,7 +27,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-          allow-prereleases: true
+
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config nasm libasound2-dev libopus-dev libdav1d-dev
 
       - name: Install system deps (macOS)
         if: runner.os == 'macOS'
@@ -47,30 +51,13 @@ jobs:
         with:
           target: ${{ matrix.target }}
           args: --release --out dist
-          manylinux: auto
+          manylinux: off
           working-directory: crates/vox-media
-          before-script-linux: |
-            yum install -y pkgconfig nasm alsa-lib-devel
-            (
-              cd /tmp
-              curl -sL https://github.com/xiph/opus/releases/download/v1.5.2/opus-1.5.2.tar.gz | tar xz
-              cd opus-1.5.2
-              ./configure --prefix=/usr && make -j$(nproc) && make install
-            )
-            (
-              cd /tmp
-              curl -sL https://code.videolan.org/videolan/dav1d/-/archive/1.5.1/dav1d-1.5.1.tar.bz2 | tar xj
-              pip install meson ninja
-              cd dav1d-1.5.1
-              meson setup build --prefix=/usr --default-library=static --buildtype=release
-              ninja -C build && ninja -C build install
-            )
 
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-media-${{ matrix.target }}
           path: crates/vox-media/dist/*.whl
-          retention-days: 1
 
   build-sdk:
     name: "vox-sdk (pure Python)"
@@ -81,19 +68,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-          allow-prereleases: true
 
-      - name: Install build tools
-        run: pip install build
+      - run: pip install build
 
-      - name: Build wheel + sdist
-        run: python -m build
+      - run: python -m build
 
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-sdk
           path: dist/*
-          retention-days: 1
 
   release:
     name: Create GitHub Release
@@ -105,22 +88,7 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: List artifacts
-        run: ls -R artifacts/
-
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
           generate_release_notes: true
-
-  cleanup:
-    name: Delete build artifacts
-    needs: [release]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - uses: geekyeggo/delete-artifact@v5
-        with:
-          name: |
-            wheel-media-*
-            wheel-sdk
