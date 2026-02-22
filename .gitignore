@@ -18,6 +18,9 @@ uploads/
 .vscode/
 *.swp
 
+# macOS
+.DS_Store
+
 # Environment
 .env
 .venv/
