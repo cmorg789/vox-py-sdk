@@ -32,6 +32,10 @@ enum MediaCommand {
         fps: u32,
         bitrate_kbps: u32,
     },
+    SetInputVolume(f32),
+    SetOutputVolume(f32),
+    SetNoiseGate(f32),
+    SetUserVolume { user_id: u32, volume: f32 },
 }
 
 /// Events emitted by the media runtime for Python consumption.
@@ -203,6 +207,26 @@ impl VoxMediaClient {
             fps,
             bitrate_kbps,
         })
+    }
+
+    /// Set global input (microphone) volume. 0.0 = silence, 1.0 = unity, 2.0 = 2x gain.
+    fn set_input_volume(&self, volume: f32) -> PyResult<()> {
+        self.send_cmd(MediaCommand::SetInputVolume(volume))
+    }
+
+    /// Set global output (playback) volume. 0.0 = silence, 1.0 = unity, 2.0 = 2x gain.
+    fn set_output_volume(&self, volume: f32) -> PyResult<()> {
+        self.send_cmd(MediaCommand::SetOutputVolume(volume))
+    }
+
+    /// Set noise gate threshold. RMS below this value silences the mic. 0.0 = disabled.
+    fn set_noise_gate(&self, threshold: f32) -> PyResult<()> {
+        self.send_cmd(MediaCommand::SetNoiseGate(threshold))
+    }
+
+    /// Set per-user output volume. 0.0 = silence, 1.0 = unity, 2.0 = 2x gain.
+    fn set_user_volume(&self, user_id: u32, volume: f32) -> PyResult<()> {
+        self.send_cmd(MediaCommand::SetUserVolume { user_id, volume })
     }
 
     /// Poll for the next decoded video frame.

@@ -156,6 +156,73 @@ class TestMuteDeafVideo:
             client.stop()
 
 
+class TestVolumeAndGate:
+    """Test volume and noise gate API methods."""
+
+    def test_set_input_volume(self):
+        client = VoxMediaClient()
+        client.start()
+        try:
+            client.set_input_volume(0.5)
+            client.set_input_volume(1.0)
+            client.set_input_volume(2.0)
+        finally:
+            client.stop()
+
+    def test_set_output_volume(self):
+        client = VoxMediaClient()
+        client.start()
+        try:
+            client.set_output_volume(0.0)
+            client.set_output_volume(1.0)
+            client.set_output_volume(2.0)
+        finally:
+            client.stop()
+
+    def test_set_noise_gate(self):
+        client = VoxMediaClient()
+        client.start()
+        try:
+            client.set_noise_gate(0.05)
+            client.set_noise_gate(0.0)
+            client.set_noise_gate(1.0)
+        finally:
+            client.stop()
+
+    def test_set_user_volume(self):
+        client = VoxMediaClient()
+        client.start()
+        try:
+            client.set_user_volume(42, 0.5)
+            client.set_user_volume(42, 1.0)
+            client.set_user_volume(99, 2.0)
+        finally:
+            client.stop()
+
+    def test_volume_methods_before_start_raises(self):
+        client = VoxMediaClient()
+        with pytest.raises(RuntimeError, match="not started"):
+            client.set_input_volume(1.0)
+        with pytest.raises(RuntimeError, match="not started"):
+            client.set_output_volume(1.0)
+        with pytest.raises(RuntimeError, match="not started"):
+            client.set_noise_gate(0.0)
+        with pytest.raises(RuntimeError, match="not started"):
+            client.set_user_volume(1, 1.0)
+
+    def test_volume_defaults_no_crash(self):
+        """Setting all volumes to their default values should not error."""
+        client = VoxMediaClient()
+        client.start()
+        try:
+            client.set_input_volume(1.0)
+            client.set_output_volume(1.0)
+            client.set_noise_gate(0.0)
+            client.set_user_volume(1, 1.0)
+        finally:
+            client.stop()
+
+
 class TestConnectWithoutServer:
     """Test connect + video commands without a real SFU (exercises command pipeline)."""
 

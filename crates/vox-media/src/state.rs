@@ -53,6 +53,12 @@ impl Default for VideoConfig {
     }
 }
 
+/// Per-user audio decoder with idle tracking.
+struct UserAudioDecoder {
+    decoder: codec::OpusDecoder,
+    last_used: Instant,
+}
+
 /// Per-user video decoder with idle tracking.
 struct UserVideoDecoder {
     decoder: codec::Av1Decoder,
@@ -70,13 +76,18 @@ struct ActiveSession {
     sequence: u32,
     timestamp: u32,
     encoder: codec::OpusEncoder,
-    decoder: codec::OpusDecoder,
+    audio_decoders: HashMap<u32, UserAudioDecoder>,
     _capture_stream: cpal::Stream,
     capture_rx: mpsc::UnboundedReceiver<Vec<i16>>,
     _playback_stream: cpal::Stream,
     playback_tx: mpsc::UnboundedSender<Vec<i16>>,
     muted: bool,
     deafened: bool,
+    // Volume / noise gate
+    input_volume: f32,
+    output_volume: f32,
+    noise_gate_threshold: f32,
+    user_volumes: HashMap<u32, f32>,
     // Video state
     video: bool,
     video_config: VideoConfig,
@@ -143,9 +154,8 @@ async fn establish_session(
     // Start audio playback
     let (playback_stream, playback_tx) = audio::start_playback()?;
 
-    // Create Opus encoder/decoder
+    // Create Opus encoder
     let encoder = codec::OpusEncoder::new()?;
-    let decoder = codec::OpusDecoder::new()?;
 
     Ok(ActiveSession {
         connection,
@@ -154,13 +164,17 @@ async fn establish_session(
         sequence: 0,
         timestamp: 0,
         encoder,
-        decoder,
+        audio_decoders: HashMap::new(),
         _capture_stream: capture_stream,
         capture_rx,
         _playback_stream: playback_stream,
         playback_tx,
         muted: false,
         deafened: false,
+        input_volume: 1.0,
+        output_volume: 1.0,
+        noise_gate_threshold: 0.0,
+        user_volumes: HashMap::new(),
         video: false,
         video_config: VideoConfig::default(),
         video_sequence: 0,
@@ -268,6 +282,10 @@ pub async fn run_media_loop(
                             Some(MediaCommand::SetDeaf(_)) => {}
                             Some(MediaCommand::SetVideo(_)) => {}
                             Some(MediaCommand::SetVideoConfig { .. }) => {}
+                            Some(MediaCommand::SetInputVolume(_)) => {}
+                            Some(MediaCommand::SetOutputVolume(_)) => {}
+                            Some(MediaCommand::SetNoiseGate(_)) => {}
+                            Some(MediaCommand::SetUserVolume { .. }) => {}
                         }
                     }
                 }
@@ -335,10 +353,27 @@ pub async fn run_media_loop(
                             Some(MediaCommand::SetVideoConfig { width, height, fps, bitrate_kbps }) => {
                                 s.video_config = VideoConfig { width, height, fps, bitrate_kbps };
                             }
+                            Some(MediaCommand::SetInputVolume(v)) => {
+                                s.input_volume = v;
+                            }
+                            Some(MediaCommand::SetOutputVolume(v)) => {
+                                s.output_volume = v;
+                            }
+                            Some(MediaCommand::SetNoiseGate(t)) => {
+                                s.noise_gate_threshold = t;
+                            }
+                            Some(MediaCommand::SetUserVolume { user_id, volume }) => {
+                                if (volume - 1.0).abs() < f32::EPSILON {
+                                    s.user_volumes.remove(&user_id);
+                                } else {
+                                    s.user_volumes.insert(user_id, volume);
+                                }
+                            }
                         }
                     }
-                    Some(pcm) = s.capture_rx.recv() => {
+                    Some(mut pcm) = s.capture_rx.recv() => {
                         if !s.muted {
+                            apply_input_processing(&mut pcm, s.input_volume, s.noise_gate_threshold);
                             send_audio_frame(s, pcm);
                         }
                     }
@@ -533,15 +568,36 @@ fn send_audio_frame(session: &mut ActiveSession, pcm: Vec<i16>) {
     session.timestamp = session.timestamp.wrapping_add(960);
 }
 
-/// Decode and play back a received audio frame.
+/// Decode and play back a received audio frame with per-user decoder and volume scaling.
 fn receive_audio_frame(session: &mut ActiveSession, frame: quic::InFrame) {
-    let pcm = match session.decoder.decode(&frame.payload) {
+    let user_id = frame.header.user_id;
+
+    let user_decoder = session
+        .audio_decoders
+        .entry(user_id)
+        .or_insert_with(|| UserAudioDecoder {
+            decoder: codec::OpusDecoder::new().expect("opus decoder"),
+            last_used: Instant::now(),
+        });
+    user_decoder.last_used = Instant::now();
+
+    let mut pcm = match user_decoder.decoder.decode(&frame.payload) {
         Ok(samples) => samples,
         Err(e) => {
-            tracing::warn!("Opus decode error: {}", e);
+            tracing::warn!("Opus decode error for user {}: {}", user_id, e);
             return;
         }
     };
+
+    // Apply per-user volume and global output volume
+    let user_vol = session.user_volumes.get(&user_id).copied().unwrap_or(1.0);
+    let combined_vol = user_vol * session.output_volume;
+
+    if (combined_vol - 1.0).abs() > f32::EPSILON {
+        for s in pcm.iter_mut() {
+            *s = ((*s as f32) * combined_vol).clamp(-32767.0, 32767.0) as i16;
+        }
+    }
 
     let _ = session.playback_tx.send(pcm);
 }
@@ -599,9 +655,37 @@ fn receive_video_fragment(
     }
 }
 
-/// Evict per-user video decoders that have been idle too long.
+/// Apply noise gate and input volume scaling to a PCM buffer.
+fn apply_input_processing(pcm: &mut Vec<i16>, volume: f32, gate_threshold: f32) {
+    // Noise gate (RMS-based)
+    if gate_threshold > 0.0 {
+        let rms = (pcm.iter().map(|&s| (s as f64).powi(2)).sum::<f64>() / pcm.len() as f64).sqrt();
+        let normalized_rms = rms / 32767.0;
+        if normalized_rms < gate_threshold as f64 {
+            pcm.fill(0);
+            return;
+        }
+    }
+    // Volume scaling
+    if (volume - 1.0).abs() > f32::EPSILON {
+        for s in pcm.iter_mut() {
+            *s = ((*s as f32) * volume).clamp(-32767.0, 32767.0) as i16;
+        }
+    }
+}
+
+/// Evict per-user audio and video decoders that have been idle too long.
 fn evict_idle_decoders(session: &mut ActiveSession) {
     let now = Instant::now();
+    session
+        .audio_decoders
+        .retain(|uid, dec| {
+            let keep = now.duration_since(dec.last_used) < DECODER_IDLE_TIMEOUT;
+            if !keep {
+                tracing::debug!("Evicting idle audio decoder for user {uid}");
+            }
+            keep
+        });
     session
         .video_decoders
         .retain(|uid, dec| {

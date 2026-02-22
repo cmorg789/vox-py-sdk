@@ -22,7 +22,7 @@ dev = [
     "ruff>=0.6",
 ]
 media = [
-    "vox-media",
+    "vox-media>=0.1",
 ]
 
 [tool.setuptools.packages.find]
