@@ -59,7 +59,7 @@ jobs:
           working-directory: crates/vox-media
           before-script-linux: |
             dnf install -y epel-release
-            dnf install -y nasm opus-devel libdav1d-devel pkg-config
+            dnf install -y nasm opus-devel libdav1d-devel pkg-config kernel-headers
 
       - uses: actions/upload-artifact@v4
         with:
