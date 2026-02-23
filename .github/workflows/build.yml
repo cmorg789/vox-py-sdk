@@ -25,6 +25,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Sync version from tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i.bak "s/^version = .*/version = \"$VERSION\"/" crates/vox-media/pyproject.toml
+          sed -i.bak "s/^version = .*/version = \"$VERSION\"/" crates/vox-media/Cargo.toml
+          rm -f crates/vox-media/pyproject.toml.bak crates/vox-media/Cargo.toml.bak
+
       - uses: actions/setup-python@v5
         with:
           python-version: |
@@ -71,6 +79,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Sync version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = .*/version = \"$VERSION\"/" pyproject.toml
 
       - uses: actions/setup-python@v5
         with:
