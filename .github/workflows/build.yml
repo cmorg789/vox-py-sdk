@@ -54,8 +54,30 @@ jobs:
         shell: bash
         run: |
           choco install pkgconfiglite nasm -y
-          vcpkg install dav1d:x64-windows opus:x64-windows
           echo "PKG_CONFIG_PATH=$VCPKG_INSTALLATION_ROOT/installed/x64-windows/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      - name: Cache vcpkg packages (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        id: vcpkg-cache
+        with:
+          path: ${{ env.VCPKG_INSTALLATION_ROOT }}/installed
+          key: vcpkg-x64-windows-dav1d-opus-${{ hashFiles('.github/workflows/build.yml') }}
+
+      - name: Install vcpkg packages (Windows)
+        if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: vcpkg install dav1d:x64-windows opus:x64-windows
+
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            crates/vox-media/target
+          key: rust-${{ matrix.target }}-${{ hashFiles('crates/vox-media/Cargo.lock') }}
+          restore-keys: rust-${{ matrix.target }}-
 
       - name: Build wheel
         uses: PyO3/maturin-action@v1
