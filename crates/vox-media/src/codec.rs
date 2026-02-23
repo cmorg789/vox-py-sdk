@@ -12,7 +12,8 @@ pub struct OpusEncoder {
 impl OpusEncoder {
     /// Create a new Opus encoder at 48kHz mono.
     pub fn new() -> Result<Self, opus::Error> {
-        let encoder = opus::Encoder::new(48000, opus::Channels::Mono, opus::Application::Voip)?;
+        let mut encoder = opus::Encoder::new(48000, opus::Channels::Mono, opus::Application::Voip)?;
+        encoder.set_dtx(true)?;
         Ok(OpusEncoder {
             inner: encoder,
             frame_size: 960, // 20ms at 48kHz
@@ -20,11 +21,14 @@ impl OpusEncoder {
     }
 
     /// Encode a frame of PCM i16 samples to Opus.
-    pub fn encode(&mut self, pcm: &[i16]) -> Result<Bytes, opus::Error> {
+    /// Returns `(opus_bytes, is_dtx)` where `is_dtx` is true when the encoder
+    /// produced a DTX comfort-noise frame (payload <= 2 bytes).
+    pub fn encode(&mut self, pcm: &[i16]) -> Result<(Bytes, bool), opus::Error> {
         let mut output = vec![0u8; 4000]; // max opus frame
         let len = self.inner.encode(pcm, &mut output)?;
         output.truncate(len);
-        Ok(Bytes::from(output))
+        let is_dtx = len <= 2;
+        Ok((Bytes::from(output), is_dtx))
     }
 
     pub fn frame_size(&self) -> usize {

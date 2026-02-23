@@ -543,15 +543,15 @@ fn receive_datagram(session: &mut ActiveSession, data: Bytes, events: &EventQueu
 
 /// Encode and send an audio frame over QUIC.
 fn send_audio_frame(session: &mut ActiveSession, pcm: Vec<i16>) {
-    let opus_data = match session.encoder.encode(&pcm) {
-        Ok(data) => data,
+    let (opus_data, is_dtx) = match session.encoder.encode(&pcm) {
+        Ok(pair) => pair,
         Err(e) => {
             tracing::warn!("Opus encode error: {}", e);
             return;
         }
     };
 
-    let frame = quic::OutFrame::audio(
+    let mut frame = quic::OutFrame::audio(
         session.room_id,
         session.user_id,
         quic::CODEC_OPUS,
@@ -559,6 +559,7 @@ fn send_audio_frame(session: &mut ActiveSession, pcm: Vec<i16>) {
         session.timestamp,
         opus_data,
     );
+    frame.header.dtx = is_dtx;
 
     if let Err(e) = session.connection.send_datagram(frame.encode()) {
         tracing::warn!("Failed to send datagram: {}", e);
