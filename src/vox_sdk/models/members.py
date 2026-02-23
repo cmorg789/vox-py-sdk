@@ -3,6 +3,7 @@ from vox_sdk.models.base import VoxModel
 
 class MemberResponse(VoxModel):
     user_id: int
+    username: str = ""
     display_name: str | None = None
     avatar: str | None = None
     nickname: str | None = None

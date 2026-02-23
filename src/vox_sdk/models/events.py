@@ -95,6 +95,7 @@ class MessagePinUpdate(GatewayEvent):
 @dataclass
 class MemberJoin(GatewayEvent):
     user_id: int = 0
+    username: str = ""
     display_name: str | None = None
 
 @dataclass
@@ -633,10 +634,14 @@ _EVENT_MAP: dict[str, type[GatewayEvent]] = {
 
 # Known fields for each event type (event-specific, excluding base fields)
 _KNOWN_FIELDS: dict[str, set[str]] = {}
+# Event types where the subclass re-declares "type" as a data field
+# (e.g. FeedCreate.type = feed kind, RoomCreate.type = room kind).
+_HAS_OWN_TYPE: set[str] = set()
 for _name, _cls in _EVENT_MAP.items():
-    _KNOWN_FIELDS[_name] = {
-        f.name for f in _cls.__dataclass_fields__.values()
-    } - {"type", "seq", "raw"}
+    _own = {f.name for f in _cls.__dataclass_fields__.values()}
+    _KNOWN_FIELDS[_name] = _own - {"type", "seq", "raw"}
+    if _cls.__dataclass_fields__.get("type") is not GatewayEvent.__dataclass_fields__["type"]:
+        _HAS_OWN_TYPE.add(_name)
 
 
 def parse_event(raw: dict[str, Any]) -> GatewayEvent:
@@ -667,4 +672,9 @@ def parse_event(raw: dict[str, Any]) -> GatewayEvent:
     if event_type == "notification_create" and "type" in data:
         kwargs["notification_type"] = data["type"]
 
-    return cls(type=event_type, seq=seq, raw=raw, **kwargs)
+    # If the event subclass re-declares "type" (e.g. FeedCreate, RoomCreate),
+    # pass the payload's type value so it isn't lost.
+    if event_type in _HAS_OWN_TYPE and "type" in data:
+        kwargs["type"] = data["type"]
+
+    return cls(type=kwargs.pop("type", event_type), seq=seq, raw=raw, **kwargs)
