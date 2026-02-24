@@ -101,6 +101,7 @@ jobs:
             Write-Host "Repairing $($whl.Name)..."
             delvewheel repair `
               --add-path "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin" `
+              --no-dll "ext-ms-win-rtcore-ntuser-synch-ext-l1-1-0.dll" `
               -w crates/vox-media/dist-repaired `
               $whl.FullName
           }
