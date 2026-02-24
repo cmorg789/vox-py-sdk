@@ -101,7 +101,7 @@ jobs:
             Write-Host "Repairing $($whl.Name)..."
             delvewheel repair `
               --add-path "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin" `
-              --exclude "ext-ms-win-*.dll" `
+              --exclude "ext-ms-*.dll" `
               -w crates/vox-media/dist-repaired `
               $whl.FullName
           }
