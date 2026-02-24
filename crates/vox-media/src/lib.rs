@@ -46,6 +46,8 @@ enum MediaEvent {
     Reconnecting { attempt: u32, delay_secs: u64 },
     AudioError(String),
     VideoError(String),
+    SpeakingStart(u32),
+    SpeakingStop(u32),
 }
 
 impl MediaEvent {
@@ -59,6 +61,8 @@ impl MediaEvent {
             }
             MediaEvent::AudioError(msg) => ("audio_error".into(), msg.clone()),
             MediaEvent::VideoError(msg) => ("video_error".into(), msg.clone()),
+            MediaEvent::SpeakingStart(uid) => ("speaking_start".into(), uid.to_string()),
+            MediaEvent::SpeakingStop(uid) => ("speaking_stop".into(), uid.to_string()),
         }
     }
 }

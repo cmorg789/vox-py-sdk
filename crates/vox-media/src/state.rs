@@ -20,6 +20,10 @@ const MAX_BACKOFF_SECS: u64 = 30;
 const DECODER_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Evict stale partial video frames after this duration.
 const REASSEMBLY_STALE_TIMEOUT: Duration = Duration::from_secs(2);
+/// RMS threshold (normalized 0.0–1.0) above which a user is considered speaking.
+const SPEAKING_THRESHOLD: f64 = 0.01;
+/// How long after the last above-threshold frame before emitting speaking_stop.
+const SPEAKING_HOLDOFF: Duration = Duration::from_millis(200);
 
 /// Snapshot of connection parameters for automatic reconnection.
 #[derive(Clone)]
@@ -51,6 +55,12 @@ impl Default for VideoConfig {
             bitrate_kbps: 500,
         }
     }
+}
+
+/// Per-user speaking state for hysteresis-based detection.
+struct SpeakingState {
+    speaking: bool,
+    last_above_threshold: Instant,
 }
 
 /// Per-user audio decoder with idle tracking.
@@ -88,6 +98,8 @@ struct ActiveSession {
     output_volume: f32,
     noise_gate_threshold: f32,
     user_volumes: HashMap<u32, f32>,
+    // Speaking detection
+    speaking_states: HashMap<u32, SpeakingState>,
     // Video state
     video: bool,
     video_config: VideoConfig,
@@ -175,6 +187,7 @@ async fn establish_session(
         output_volume: 1.0,
         noise_gate_threshold: 0.0,
         user_volumes: HashMap::new(),
+        speaking_states: HashMap::new(),
         video: false,
         video_config: VideoConfig::default(),
         video_sequence: 0,
@@ -374,7 +387,18 @@ pub async fn run_media_loop(
                     Some(mut pcm) = s.capture_rx.recv() => {
                         if !s.muted {
                             apply_input_processing(&mut pcm, s.input_volume, s.noise_gate_threshold);
+                            // Speaking detection on processed local audio
+                            update_speaking_state(s, s.user_id, &pcm, &events);
                             send_audio_frame(s, pcm);
+                        } else {
+                            // Muted → ensure we stop speaking
+                            let state = s.speaking_states.get(&s.user_id);
+                            if state.is_some_and(|st| st.speaking) {
+                                if let Some(st) = s.speaking_states.get_mut(&s.user_id) {
+                                    st.speaking = false;
+                                }
+                                push_event(&events, MediaEvent::SpeakingStop(s.user_id));
+                            }
                         }
                     }
                     Some(frame) = camera_frame => {
@@ -529,7 +553,7 @@ fn receive_datagram(session: &mut ActiveSession, data: Bytes, events: &EventQueu
     match frame.header.media_type {
         quic::MEDIA_TYPE_AUDIO => {
             if !session.deafened {
-                receive_audio_frame(session, frame);
+                receive_audio_frame(session, frame, events);
             }
         }
         quic::MEDIA_TYPE_VIDEO => {
@@ -569,8 +593,35 @@ fn send_audio_frame(session: &mut ActiveSession, pcm: Vec<i16>) {
     session.timestamp = session.timestamp.wrapping_add(960);
 }
 
+/// Update speaking state for a user based on PCM audio levels.
+/// Emits SpeakingStart/SpeakingStop events with hysteresis.
+fn update_speaking_state(session: &mut ActiveSession, user_id: u32, pcm: &[i16], events: &EventQueue) {
+    if pcm.is_empty() {
+        return;
+    }
+    let rms = (pcm.iter().map(|&s| (s as f64).powi(2)).sum::<f64>() / pcm.len() as f64).sqrt();
+    let normalized_rms = rms / 32767.0;
+    let now = Instant::now();
+
+    let state = session.speaking_states.entry(user_id).or_insert(SpeakingState {
+        speaking: false,
+        last_above_threshold: now - SPEAKING_HOLDOFF - Duration::from_millis(1),
+    });
+
+    if normalized_rms >= SPEAKING_THRESHOLD {
+        state.last_above_threshold = now;
+        if !state.speaking {
+            state.speaking = true;
+            push_event(events, MediaEvent::SpeakingStart(user_id));
+        }
+    } else if state.speaking && now.duration_since(state.last_above_threshold) >= SPEAKING_HOLDOFF {
+        state.speaking = false;
+        push_event(events, MediaEvent::SpeakingStop(user_id));
+    }
+}
+
 /// Decode and play back a received audio frame with per-user decoder and volume scaling.
-fn receive_audio_frame(session: &mut ActiveSession, frame: quic::InFrame) {
+fn receive_audio_frame(session: &mut ActiveSession, frame: quic::InFrame, events: &EventQueue) {
     let user_id = frame.header.user_id;
 
     let user_decoder = session
@@ -589,6 +640,9 @@ fn receive_audio_frame(session: &mut ActiveSession, frame: quic::InFrame) {
             return;
         }
     };
+
+    // Speaking detection on decoded PCM (before volume scaling)
+    update_speaking_state(session, user_id, &pcm, events);
 
     // Apply per-user volume and global output volume
     let user_vol = session.user_volumes.get(&user_id).copied().unwrap_or(1.0);
