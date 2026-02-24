@@ -54,6 +54,9 @@ jobs:
         shell: bash
         run: |
           choco install pkgconfiglite nasm -y
+          # Ensure pkg-config is on PATH for all subsequent steps (including maturin-action)
+          PKG_CONFIG_DIR=$(dirname "$(which pkg-config 2>/dev/null || find /c/ProgramData/chocolatey -name 'pkg-config.exe' 2>/dev/null | head -1)")
+          echo "$PKG_CONFIG_DIR" >> "$GITHUB_PATH"
           echo "PKG_CONFIG_PATH=$VCPKG_INSTALLATION_ROOT/installed/x64-windows/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Cache vcpkg packages (Windows)
