@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import mimetypes
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -28,11 +29,13 @@ class EmojiAPI:
         return EmojiListResponse.model_validate(r.json())
 
     async def create_emoji(self, name: str, image_path: str) -> EmojiResponse:
-        data = await asyncio.to_thread(Path(image_path).read_bytes)
+        p = Path(image_path)
+        data = await asyncio.to_thread(p.read_bytes)
+        mime = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
         r = await self._http.post(
             "/api/v1/emoji",
             data={"name": name},
-            files={"image": data},
+            files={"image": (p.name, data, mime)},
         )
         return EmojiResponse.model_validate(r.json())
 
@@ -50,11 +53,13 @@ class EmojiAPI:
         return StickerListResponse.model_validate(r.json())
 
     async def create_sticker(self, name: str, image_path: str) -> StickerResponse:
-        data = await asyncio.to_thread(Path(image_path).read_bytes)
+        p = Path(image_path)
+        data = await asyncio.to_thread(p.read_bytes)
+        mime = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
         r = await self._http.post(
             "/api/v1/stickers",
             data={"name": name},
-            files={"image": data},
+            files={"image": (p.name, data, mime)},
         )
         return StickerResponse.model_validate(r.json())
 
