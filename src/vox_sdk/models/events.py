@@ -127,7 +127,7 @@ class MemberUnban(GatewayEvent):
 class FeedCreate(GatewayEvent):
     feed_id: int = 0
     name: str = ""
-    type: str | None = None
+    channel_type: str | None = None
     topic: str | None = None
     category_id: int | None = None
 
@@ -144,7 +144,7 @@ class FeedDelete(GatewayEvent):
 class RoomCreate(GatewayEvent):
     room_id: int = 0
     name: str = ""
-    type: str | None = None
+    channel_type: str | None = None
     category_id: int | None = None
 
 @dataclass
@@ -635,13 +635,14 @@ _EVENT_MAP: dict[str, type[GatewayEvent]] = {
 # Known fields for each event type (event-specific, excluding base fields)
 _KNOWN_FIELDS: dict[str, set[str]] = {}
 # Event types where the subclass re-declares "type" as a data field
-# (e.g. FeedCreate.type = feed kind, RoomCreate.type = room kind).
-_HAS_OWN_TYPE: set[str] = set()
+# Events whose payload includes a "type" key that maps to `channel_type`
+# on the dataclass (e.g. FeedCreate, RoomCreate).
+_HAS_CHANNEL_TYPE: set[str] = set()
 for _name, _cls in _EVENT_MAP.items():
     _own = {f.name for f in _cls.__dataclass_fields__.values()}
     _KNOWN_FIELDS[_name] = _own - {"type", "seq", "raw"}
-    if _cls.__dataclass_fields__.get("type") is not GatewayEvent.__dataclass_fields__["type"]:
-        _HAS_OWN_TYPE.add(_name)
+    if "channel_type" in _own:
+        _HAS_CHANNEL_TYPE.add(_name)
 
 
 def parse_event(raw: dict[str, Any]) -> GatewayEvent:
@@ -672,9 +673,9 @@ def parse_event(raw: dict[str, Any]) -> GatewayEvent:
     if event_type == "notification_create" and "type" in data:
         kwargs["notification_type"] = data["type"]
 
-    # If the event subclass re-declares "type" (e.g. FeedCreate, RoomCreate),
-    # pass the payload's type value so it isn't lost.
-    if event_type in _HAS_OWN_TYPE and "type" in data:
-        kwargs["type"] = data["type"]
+    # For events whose payload includes "type" as a channel/room kind
+    # (e.g. FeedCreate, RoomCreate), map it to the `channel_type` field.
+    if event_type in _HAS_CHANNEL_TYPE and "type" in data:
+        kwargs["channel_type"] = data["type"]
 
-    return cls(type=kwargs.pop("type", event_type), seq=seq, raw=raw, **kwargs)
+    return cls(type=event_type, seq=seq, raw=raw, **kwargs)

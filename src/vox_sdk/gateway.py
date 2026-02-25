@@ -227,7 +227,11 @@ class GatewayClient:
         try:
             while not self._closed:
                 raw = await self._recv(ws)
-                event = parse_event(raw)
+                try:
+                    event = parse_event(raw)
+                except Exception:
+                    log.exception("Failed to parse event: %s", raw.get("type", "?"))
+                    continue
 
                 if event.seq is not None:
                     self._seq = event.seq
