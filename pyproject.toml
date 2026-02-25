@@ -5,6 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vox-sdk"
 version = "0.1.0"
+license = "Apache-2.0"
 description = "Python client SDK for the Vox protocol"
 requires-python = ">=3.11"
 dependencies = [
