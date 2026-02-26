@@ -198,6 +198,10 @@ class GatewayClient:
             data["custom_status"] = custom_status
         await self.send("presence_update", data)
 
+    async def send_mls_relay(self, mls_type: str, data: str) -> None:
+        """Relay an MLS message (welcome, commit, or proposal) to the server."""
+        await self.send("mls_relay", {"mls_type": mls_type, "data": data})
+
     async def _run(self, ws: Any) -> None:
         # Step 1: Receive hello
         raw = await self._recv(ws)

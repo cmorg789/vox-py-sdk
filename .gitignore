@@ -9,6 +9,7 @@ build/
 
 # Rust
 crates/*/target/
+crates/vox-mls/openmls-check/
 
 # Uploads (user data)
 uploads/

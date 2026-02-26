@@ -51,6 +51,7 @@ class MessageCreate(GatewayEvent):
     webhook_id: int | None = None
     embed: dict | None = None
     attachments: list[dict] = field(default_factory=list)
+    opaque_blob: str | None = None
 
 @dataclass
 class MessageUpdate(GatewayEvent):
@@ -435,10 +436,12 @@ class MLSWelcome(GatewayEvent):
 @dataclass
 class MLSCommit(GatewayEvent):
     data: str = ""
+    group_id: str = ""
 
 @dataclass
 class MLSProposal(GatewayEvent):
     data: str = ""
+    group_id: str = ""
 
 @dataclass
 class DeviceListUpdate(GatewayEvent):

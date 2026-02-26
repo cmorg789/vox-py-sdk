@@ -81,5 +81,22 @@ class E2EEAPI:
         r = await self._http.get("/api/v1/keys/backup")
         return KeyBackupResponse.model_validate(r.json())
 
+    async def upload_mls_key_packages(
+        self, device_id: str, key_packages: list[str]
+    ) -> None:
+        """Upload MLS key packages for this device."""
+        await self._http.post(
+            f"/api/v1/keys/mls/{device_id}/key-packages",
+            json={"key_packages": key_packages},
+        )
+
+    async def get_mls_key_packages(self, user_id: int) -> list[str]:
+        """Fetch MLS key packages for all of a user's devices.
+
+        Returns a list of base64-encoded MLS KeyPackage bytes.
+        """
+        r = await self._http.get(f"/api/v1/keys/mls/{user_id}/key-packages")
+        return r.json()["key_packages"]
+
     async def reset_keys(self) -> None:
         await self._http.post("/api/v1/keys/reset")

@@ -45,6 +45,7 @@ class Client:
         self._embeds: Any = None
 
         self._gateway: Any = None
+        self._crypto: Any = None
 
     # --- Convenience login ---
 
@@ -189,6 +190,18 @@ class Client:
             from vox_sdk.api.embeds import EmbedsAPI
             self._embeds = EmbedsAPI(self.http)
         return self._embeds
+
+    @property
+    def crypto(self) -> Any:
+        if self._crypto is None:
+            from vox_sdk.crypto import CryptoManager
+            self._crypto = CryptoManager(self)
+        return self._crypto
+
+    @property
+    def gateway(self) -> Any:
+        """The active gateway client, or None if not connected."""
+        return self._gateway
 
     # --- Gateway ---
 
