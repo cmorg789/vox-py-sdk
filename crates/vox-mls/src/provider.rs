@@ -218,6 +218,12 @@ impl VoxProvider {
             .decode(ct_b64)
             .map_err(|e| format!("Failed to decode ciphertext: {e}"))?;
 
+        if nonce_bytes.len() != 12 {
+            return Err(format!(
+                "Invalid nonce length: expected 12 bytes, got {}",
+                nonce_bytes.len()
+            ));
+        }
         let nonce = Nonce::from_slice(&nonce_bytes);
         let cipher = Aes256Gcm::new(key.into());
 
@@ -283,14 +289,10 @@ impl VoxProvider {
                 .map_err(|e| format!("Failed to restore backup: {e}"))?;
         }
 
-        // 5. Run migrations on the restored connection
-        {
-            let mut temp_storage =
-                SqliteStorageProvider::<JsonCodec, &mut Connection>::new(&mut new_conn);
-            temp_storage
-                .run_migrations()
-                .map_err(|e| format!("Failed to run migrations after restore: {e}"))?;
-        }
+        // 5. The restored schema already contains OpenMLS tables from the
+        //    source database, so we skip run_migrations() here — re-running
+        //    migrations on an already-migrated schema risks failures if any
+        //    migration is not idempotent.
 
         // Ensure custom tables exist
         new_conn

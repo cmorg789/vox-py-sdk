@@ -249,7 +249,7 @@ impl MlsEngine {
         // UTF-8 group IDs pass through unchanged; binary IDs are base64-encoded
         // for Python compatibility.
         let group_id = String::from_utf8(gid_bytes.to_vec())
-            .unwrap_or_else(|e| base64::engine::general_purpose::STANDARD.encode(e.into_bytes()));
+            .unwrap_or_else(|e| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(e.into_bytes()));
 
         // Group is automatically persisted by the SQLite storage provider
         self.provider.save_group_id(&group_id).map_err(|e| {
@@ -425,6 +425,12 @@ impl MlsEngine {
     ///
     /// This is the recommended backup method — it preserves group memberships,
     /// epoch keys, and all other state. Use `import_state()` to restore.
+    ///
+    /// # Security
+    ///
+    /// The returned bytes contain **private key material** (signature keys,
+    /// epoch secrets). Callers must encrypt the output before persisting
+    /// or transmitting it — see [`encrypt_backup`](crate::crypto::backup).
     fn export_state<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let bytes = self
             .provider

@@ -152,6 +152,15 @@ class CryptoManager:
             return [base64.b64decode(kp_b64) for kp_b64 in kp_b64_list]
 
         results = await asyncio.gather(*[_fetch_kps(uid) for uid in member_user_ids])
+
+        # Ensure every requested member has at least one key package
+        for uid, kps in zip(member_user_ids, results):
+            if not kps:
+                raise RuntimeError(
+                    f"User {uid} has no uploaded MLS key packages — "
+                    "they must call upload_key_packages() before being added to a group."
+                )
+
         member_kps: list[bytes] = [kp for batch in results for kp in batch]
 
         log.debug(
@@ -162,15 +171,12 @@ class CryptoManager:
         )
 
         # Verify gateway connectivity before mutating MLS state
-        if member_kps:
-            gw = self._client.gateway
-            if gw is None:
-                raise RuntimeError(
-                    "Gateway not connected — cannot relay MLS Welcome/Commit. "
-                    "Call connect_gateway() before creating encrypted groups."
-                )
-        else:
-            gw = self._client.gateway
+        gw = self._client.gateway
+        if member_kps and gw is None:
+            raise RuntimeError(
+                "Gateway not connected — cannot relay MLS Welcome/Commit. "
+                "Call connect_gateway() before creating encrypted groups."
+            )
 
         welcome, commit = self._engine.create_group(group_id, member_kps)
 
@@ -247,16 +253,32 @@ class CryptoManager:
 
     # --- Key management ---
 
-    async def refresh_key_packages(self) -> None:
-        """Upload a fresh batch of key packages to the server.
+    async def refresh_key_packages(self, threshold: int = 25) -> None:
+        """Upload key packages only if the server has fewer than *threshold*.
 
         Call periodically (e.g. on gateway reconnect) to ensure other
         users can always initiate encrypted sessions with this device.
         """
-        # TODO: query server for remaining key package count and skip
-        # upload if sufficient packages remain.
         self._require_initialized()
-        await self.upload_key_packages(count=100)
+        if self._user_id is None:
+            raise RuntimeError("user_id not set — call initialize() first")
+
+        existing = await self._client.e2ee.get_mls_key_packages(self._user_id)
+        if len(existing) < threshold:
+            needed = 100 - len(existing)
+            log.debug(
+                "Server has %d key packages (threshold %d), uploading %d more",
+                len(existing),
+                threshold,
+                needed,
+            )
+            await self.upload_key_packages(count=needed)
+        else:
+            log.debug(
+                "Server has %d key packages (>= threshold %d), skipping upload",
+                len(existing),
+                threshold,
+            )
 
     # --- Backup ---
 
@@ -274,10 +296,23 @@ class CryptoManager:
         Restores identity, all group memberships, and registers gateway
         event handlers if not already registered. After this call the
         manager is fully operational.
+
+        The engine must be configured with the same ``encryption_key``
+        that was used when the backup was created; otherwise the
+        restore will fail because stored key material cannot be decrypted.
         """
         resp = await self._client.e2ee.download_key_backup()
         data = decrypt_backup(resp.encrypted_blob, passphrase)
-        self._engine.import_state(data)
+        try:
+            self._engine.import_state(data)
+        except RuntimeError as exc:
+            if "no encryption key configured" in str(exc):
+                raise RuntimeError(
+                    "The backup contains encrypted key material but this engine "
+                    "was created without an encryption_key. Pass the same "
+                    "encryption_key used when the backup was created."
+                ) from exc
+            raise
         self._initialized = True
 
         # Repopulate user_id and device_id from the restored database

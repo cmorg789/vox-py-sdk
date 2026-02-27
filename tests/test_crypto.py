@@ -157,7 +157,12 @@ class TestMlsEngine:
         assert engine2.group_exists("export-test")
 
     def test_identity_export_import(self):
-        """export_identity(), new engine, import_identity(), verify match."""
+        """export_identity(), new engine, import_identity(), verify match.
+
+        NOTE: export_identity() returns unencrypted private key material.
+        Production callers MUST encrypt the output before persisting or
+        transmitting it.  Here we pass raw bytes directly for testing only.
+        """
         engine = self.MlsEngine(db_path=None)
         engine.generate_identity(1, "device-a")
         original_ik = engine.identity_key()

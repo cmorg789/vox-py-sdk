@@ -84,4 +84,9 @@ def decrypt_backup(blob: str, passphrase: str) -> bytes:
         aad = json.dumps({"v": version, "salt": envelope["salt"]}, sort_keys=True).encode()
     else:
         aad = None
-    return aesgcm.decrypt(nonce, ciphertext, aad)
+    try:
+        return aesgcm.decrypt(nonce, ciphertext, aad)
+    except Exception as exc:
+        raise ValueError(
+            "Decryption failed — wrong passphrase or corrupted backup"
+        ) from exc
