@@ -104,7 +104,9 @@ jobs:
             Write-Host "Repairing $($whl.Name)..."
             delvewheel repair `
               --add-path "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin" `
-              --no-dll "ext-ms-*.dll:combase.dll:rmclient.dll" `
+              --no-dll "ext-ms-*.dll" `
+              --no-dll "combase.dll" `
+              --no-dll "rmclient.dll" `
               -w crates/vox-media/dist-repaired `
               $whl.FullName
           }
