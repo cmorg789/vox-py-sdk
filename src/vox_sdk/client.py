@@ -43,6 +43,7 @@ class Client:
         self._emoji: Any = None
         self._sync: Any = None
         self._embeds: Any = None
+        self._gifs: Any = None
 
         self._gateway: Any = None
 
@@ -182,6 +183,13 @@ class Client:
             from vox_sdk.api.sync import SyncAPI
             self._sync = SyncAPI(self.http)
         return self._sync
+
+    @property
+    def gifs(self) -> Any:
+        if self._gifs is None:
+            from vox_sdk.api.gifs import GifsAPI
+            self._gifs = GifsAPI(self.http)
+        return self._gifs
 
     @property
     def embeds(self) -> Any:

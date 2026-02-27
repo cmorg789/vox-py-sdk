@@ -50,3 +50,11 @@ class ServerAPI:
     async def update_limits(self, **limits: Any) -> dict:
         r = await self._http.patch("/api/v1/server/limits", json={"limits": limits})
         return r.json()
+
+    async def get_gifs_config(self) -> dict:
+        r = await self._http.get("/api/v1/server/gifs")
+        return r.json()
+
+    async def update_gifs_config(self, **fields: Any) -> dict:
+        r = await self._http.patch("/api/v1/server/gifs", json=fields)
+        return r.json()
