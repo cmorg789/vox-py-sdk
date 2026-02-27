@@ -70,6 +70,10 @@ class CryptoManager:
         self._registered_gateway_id: int | None = None
         # If identity was restored from SQLite, mark as initialized
         self._initialized = self._engine.identity_key() is not None
+        if self._initialized:
+            stored = self._engine.get_stored_identity()
+            if stored is not None:
+                self._user_id, self._device_id = stored
 
     @property
     def initialized(self) -> bool:
@@ -157,11 +161,21 @@ class CryptoManager:
             len(member_user_ids),
         )
 
+        # Verify gateway connectivity before mutating MLS state
+        if member_kps:
+            gw = self._client.gateway
+            if gw is None:
+                raise RuntimeError(
+                    "Gateway not connected — cannot relay MLS Welcome/Commit. "
+                    "Call connect_gateway() before creating encrypted groups."
+                )
+        else:
+            gw = self._client.gateway
+
         welcome, commit = self._engine.create_group(group_id, member_kps)
 
         # Relay welcome and commit via gateway
         if welcome or commit:
-            gw = self._client.gateway
             if gw is None:
                 raise RuntimeError(
                     "Gateway not connected — cannot relay MLS Welcome/Commit. "
@@ -188,20 +202,12 @@ class CryptoManager:
     async def process_commit(self, commit_data: bytes, group_id: str) -> None:
         """Process an incoming MLS commit."""
         self._require_initialized()
-        result = self._engine.process_message(group_id, commit_data)
-        if result.kind != "commit":
-            raise ValueError(
-                f"Expected commit message but got '{result.kind}' for group {group_id}"
-            )
+        self._engine.process_message(group_id, commit_data)
 
     async def process_proposal(self, proposal_data: bytes, group_id: str) -> None:
         """Process an incoming MLS proposal."""
         self._require_initialized()
-        result = self._engine.process_message(group_id, proposal_data)
-        if result.kind != "proposal":
-            raise ValueError(
-                f"Expected proposal message but got '{result.kind}' for group {group_id}"
-            )
+        self._engine.process_message(group_id, proposal_data)
 
     # --- Message encryption ---
 

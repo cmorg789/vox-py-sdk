@@ -184,7 +184,7 @@ impl VoxProvider {
             .encrypt(&nonce, plaintext.as_bytes())
             .map_err(|e| format!("Failed to encrypt key material: {e}"))?;
 
-        let b64 = base64::engine::general_purpose::STANDARD;
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
         Ok(format!(
             "{}{}/{}",
             ENC_PREFIX,
@@ -210,7 +210,7 @@ impl VoxProvider {
             .split_once('/')
             .ok_or("Malformed encrypted value: missing separator")?;
 
-        let b64 = base64::engine::general_purpose::STANDARD;
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let nonce_bytes = b64
             .decode(nonce_b64)
             .map_err(|e| format!("Failed to decode nonce: {e}"))?;

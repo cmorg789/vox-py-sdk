@@ -29,8 +29,9 @@ def _require_crypto() -> None:
 
 _KDF_PARAMS: dict[int, dict[str, int]] = {
     1: {"n": 2**17, "r": 8, "p": 1},
+    2: {"n": 2**17, "r": 8, "p": 1},
 }
-_CURRENT_VERSION = 1
+_CURRENT_VERSION = 2
 
 
 def encrypt_backup(data: bytes, passphrase: str) -> str:
@@ -78,6 +79,9 @@ def decrypt_backup(blob: str, passphrase: str) -> bytes:
     key = kdf.derive(passphrase.encode())
 
     aesgcm = AESGCM(key)
-    # Reconstruct the same AAD used during encryption
-    aad = json.dumps({"v": version, "salt": envelope["salt"]}, sort_keys=True).encode()
+    # v1 was encrypted without AAD; v2+ binds ciphertext to envelope metadata
+    if version >= 2:
+        aad = json.dumps({"v": version, "salt": envelope["salt"]}, sort_keys=True).encode()
+    else:
+        aad = None
     return aesgcm.decrypt(nonce, ciphertext, aad)
