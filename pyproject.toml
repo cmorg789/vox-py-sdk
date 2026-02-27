@@ -25,6 +25,10 @@ dev = [
 media = [
     "vox-media>=0.1",
 ]
+mls = [
+    "vox-mls>=0.1",
+    "cryptography>=42.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
