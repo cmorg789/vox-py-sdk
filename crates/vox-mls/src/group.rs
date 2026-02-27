@@ -32,6 +32,9 @@ pub fn create_group(
     .map_err(|e| format!("Failed to create group: {e:?}"))?;
 
     if member_key_packages.is_empty() {
+        // No merge_pending_commit needed here: OpenMLS does not generate a
+        // proposal/commit when creating a group with no initial members, so
+        // there is no pending commit to merge.
         return Ok((group, None, None));
     }
 
@@ -112,14 +115,27 @@ pub fn add_member(
     Ok((welcome, commit))
 }
 
-/// Remove a member from an existing group by leaf index.
-pub fn remove_member(
+/// Remove a member from an existing group by credential identity.
+///
+/// Iterates the group's members to find one whose credential identity matches
+/// `member_identity`, then removes them by their leaf index.
+pub fn remove_member_by_identity(
     provider: &VoxProvider,
     group: &mut MlsGroup,
     signature_keys: &SignatureKeyPair,
-    member_index: u32,
+    member_identity: &str,
 ) -> Result<MlsMessageOut, String> {
-    let leaf = LeafNodeIndex::new(member_index);
+    let leaf = group
+        .members()
+        .find_map(|m| {
+            let id_bytes = m.credential.serialized_content();
+            if id_bytes == member_identity.as_bytes() {
+                Some(m.index)
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| format!("Member '{}' not found in group", member_identity))?;
 
     let (commit, _welcome, _group_info) = group
         .remove_members(provider, signature_keys, &[leaf])

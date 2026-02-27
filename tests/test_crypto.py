@@ -246,8 +246,8 @@ class TestMlsEngine:
         bob.join_group(bytes(welcome))
         charlie.join_group(bytes(welcome))
 
-        # Alice removes Charlie (leaf index 2)
-        commit = alice.remove_member("remove-test", 2)
+        # Alice removes Charlie by credential identity
+        commit = alice.remove_member("remove-test", "3:charlie-device")
         bob.process_message("remove-test", bytes(commit))
 
         # Alice encrypts a new message
@@ -307,3 +307,62 @@ class TestMlsEngine:
 
         with pytest.raises(RuntimeError):
             engine.encrypt("some-group", b"hello")
+
+    def test_encrypted_key_storage(self, tmp_path):
+        """Engine with encryption_key encrypts private keys; round-trips via new engine."""
+        import os
+
+        db_file = str(tmp_path / "enc_test.db")
+        enc_key = os.urandom(32)
+
+        engine = self.MlsEngine(db_path=db_file, encryption_key=enc_key)
+        engine.generate_identity(1, "device-a")
+        original_ik = engine.identity_key()
+
+        # New engine with same key restores identity
+        engine2 = self.MlsEngine(db_path=db_file, encryption_key=enc_key)
+        assert engine2.identity_key() == original_ik
+
+    def test_encrypted_key_storage_wrong_key(self, tmp_path):
+        """Engine with wrong encryption_key cannot restore identity."""
+        import os
+
+        db_file = str(tmp_path / "enc_wrongkey.db")
+        enc_key = os.urandom(32)
+        wrong_key = os.urandom(32)
+
+        engine = self.MlsEngine(db_path=db_file, encryption_key=enc_key)
+        engine.generate_identity(1, "device-a")
+
+        with pytest.raises(RuntimeError):
+            self.MlsEngine(db_path=db_file, encryption_key=wrong_key)
+
+    def test_unencrypted_key_storage(self, tmp_path):
+        """Engine without encryption_key stores plaintext; round-trips."""
+        db_file = str(tmp_path / "plain_test.db")
+
+        engine = self.MlsEngine(db_path=db_file)
+        engine.generate_identity(1, "device-a")
+        original_ik = engine.identity_key()
+
+        engine2 = self.MlsEngine(db_path=db_file)
+        assert engine2.identity_key() == original_ik
+
+    def test_remove_member_invalid_identity(self):
+        """Removing a member with unknown identity raises error."""
+        alice = self.MlsEngine(db_path=None)
+        alice.generate_identity(1, "alice-device")
+
+        bob = self.MlsEngine(db_path=None)
+        bob.generate_identity(2, "bob-device")
+
+        bob_kps = bob.generate_key_packages(1)
+        alice.create_group("rm-invalid", [bytes(bob_kps[0])])
+
+        with pytest.raises(RuntimeError, match="not found in group"):
+            alice.remove_member("rm-invalid", "999:nonexistent")
+
+    def test_encryption_key_wrong_length(self):
+        """Encryption key that is not 32 bytes raises ValueError."""
+        with pytest.raises(ValueError, match="32 bytes"):
+            self.MlsEngine(db_path=None, encryption_key=b"too-short")

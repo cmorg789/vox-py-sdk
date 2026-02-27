@@ -193,6 +193,23 @@ class TestHandlerDedup:
         await cm.initialize(user_id=1, device_id="dev-1")
         assert client.gateway.add_handler.call_count == first_count
 
+    async def test_reregisters_handlers_on_new_gateway(self):
+        """Replacing gateway instance triggers re-registration."""
+        client = _make_mock_client()
+        cm = CryptoManager(client, db_path=None)
+
+        await cm.initialize(user_id=1, device_id="dev-1")
+        first_count = client.gateway.add_handler.call_count
+        assert first_count == 3
+
+        # Simulate gateway reconnect (new object)
+        new_gw = MagicMock()
+        new_gw.add_handler = MagicMock()
+        client.gateway = new_gw
+
+        await cm.initialize(user_id=1, device_id="dev-1")
+        assert new_gw.add_handler.call_count == 3
+
 
 class TestRestore:
     async def test_restore_repopulates_user_and_device_id(self):

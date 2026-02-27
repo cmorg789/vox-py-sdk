@@ -54,13 +54,20 @@ class CryptoManager:
         text = crypto.decrypt_message(dm_id=42, opaque_blob=blob)
     """
 
-    def __init__(self, client: Client, db_path: str | None = None) -> None:
+    def __init__(
+        self,
+        client: Client,
+        db_path: str | None = None,
+        encryption_key: bytes | None = None,
+    ) -> None:
         _require_mls()
         self._client = client
-        self._engine: MlsEngine = MlsEngine(db_path=db_path)
+        self._engine: MlsEngine = MlsEngine(
+            db_path=db_path, encryption_key=encryption_key
+        )
         self._device_id: str | None = None
         self._user_id: int | None = None
-        self._handlers_registered: bool = False
+        self._registered_gateway_id: int | None = None
         # If identity was restored from SQLite, mark as initialized
         self._initialized = self._engine.identity_key() is not None
 
@@ -181,12 +188,20 @@ class CryptoManager:
     async def process_commit(self, commit_data: bytes, group_id: str) -> None:
         """Process an incoming MLS commit."""
         self._require_initialized()
-        self._engine.process_message(group_id, commit_data)
+        result = self._engine.process_message(group_id, commit_data)
+        if result.kind != "commit":
+            raise ValueError(
+                f"Expected commit message but got '{result.kind}' for group {group_id}"
+            )
 
     async def process_proposal(self, proposal_data: bytes, group_id: str) -> None:
         """Process an incoming MLS proposal."""
         self._require_initialized()
-        self._engine.process_message(group_id, proposal_data)
+        result = self._engine.process_message(group_id, proposal_data)
+        if result.kind != "proposal":
+            raise ValueError(
+                f"Expected proposal message but got '{result.kind}' for group {group_id}"
+            )
 
     # --- Message encryption ---
 
@@ -293,15 +308,16 @@ class CryptoManager:
     def _register_gateway_handlers(self) -> None:
         """Register MLS event handlers on the gateway if connected.
 
-        Handlers are registered at most once to prevent duplicate event
-        processing on repeated calls to ``initialize()`` or ``restore_from_server()``.
+        Tracks the gateway instance by ``id()`` so handlers are re-registered
+        when the gateway reconnects (new instance) but not duplicated on
+        repeated calls against the same gateway.
         """
-        if self._handlers_registered:
-            return
-
         gw = self._client.gateway
         if gw is None:
             log.debug("Gateway not connected — MLS event handlers not registered")
+            return
+
+        if id(gw) == self._registered_gateway_id:
             return
 
         async def _on_welcome(event: Any) -> None:
@@ -316,7 +332,7 @@ class CryptoManager:
         gw.add_handler("mls_welcome", _on_welcome)
         gw.add_handler("mls_commit", _on_commit)
         gw.add_handler("mls_proposal", _on_proposal)
-        self._handlers_registered = True
+        self._registered_gateway_id = id(gw)
         log.info("MLS gateway event handlers registered")
 
     def _resolve_group_id(

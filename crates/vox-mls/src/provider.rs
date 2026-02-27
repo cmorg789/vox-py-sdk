@@ -1,6 +1,9 @@
 use std::ptr::NonNull;
 use std::rc::Rc;
 
+use aes_gcm::aead::{Aead, AeadCore, OsRng};
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+use base64::Engine;
 use openmls_libcrux_crypto::CryptoProvider;
 use openmls_sqlite_storage::{Connection, SqliteStorageProvider};
 use openmls_traits::{types::CryptoError, OpenMlsProvider};
@@ -11,18 +14,27 @@ use rusqlite::DatabaseName;
 
 use crate::codec::JsonCodec;
 
+/// Prefix marker for encrypted signature key pair values.
+const ENC_PREFIX: &str = "enc:v1:";
+
 /// Composite OpenMLS provider: libcrux crypto + SQLite storage.
 pub struct VoxProvider {
     db_path: String,
     crypto: CryptoProvider,
     connection: Rc<Connection>,
     storage: SqliteStorageProvider<JsonCodec, Rc<Connection>>,
+    /// Optional 256-bit key for encrypting private key material at rest.
+    /// When set, `signature_key_pair` is stored as AES-256-GCM ciphertext.
+    encryption_key: Option<[u8; 32]>,
 }
 
 impl VoxProvider {
     /// Create a new provider backed by the given SQLite database path.
     /// Pass `":memory:"` for an in-memory database (backward compat).
-    pub fn new(db_path: &str) -> Result<Self, String> {
+    ///
+    /// If `encryption_key` is provided (32 bytes), private key material will
+    /// be encrypted with AES-256-GCM before being stored in SQLite.
+    pub fn new(db_path: &str, encryption_key: Option<[u8; 32]>) -> Result<Self, String> {
         let mut conn = Connection::open(db_path)
             .map_err(|e| format!("Failed to open SQLite database: {e}"))?;
 
@@ -60,6 +72,7 @@ impl VoxProvider {
             crypto,
             connection: rc_conn,
             storage,
+            encryption_key,
         })
     }
 
@@ -80,11 +93,14 @@ impl VoxProvider {
         let user_id_i64: i64 = user_id
             .try_into()
             .map_err(|_| format!("user_id {user_id} exceeds i64::MAX"))?;
+
+        let stored_sig = self.encrypt_if_needed(signature_key_pair_json)?;
+
         self.connection
             .execute(
                 "INSERT OR REPLACE INTO vox_identity (id, user_id, device_id, credential_with_key, signature_key_pair)
                  VALUES (1, ?1, ?2, ?3, ?4)",
-                params![user_id_i64, device_id, credential_with_key_json, signature_key_pair_json],
+                params![user_id_i64, device_id, credential_with_key_json, stored_sig],
             )
             .map_err(|e| format!("Failed to save identity: {e}"))?;
         Ok(())
@@ -110,12 +126,15 @@ impl VoxProvider {
                 })?;
                 let device_id: String = row.get(1)?;
                 let cwk_json: String = row.get(2)?;
-                let sig_json: String = row.get(3)?;
-                Ok((user_id_u64, device_id, cwk_json, sig_json))
+                let sig_stored: String = row.get(3)?;
+                Ok((user_id_u64, device_id, cwk_json, sig_stored))
             });
 
         match result {
-            Ok(row) => Ok(Some(row)),
+            Ok((user_id, device_id, cwk_json, sig_stored)) => {
+                let sig_json = self.decrypt_if_needed(&sig_stored)?;
+                Ok(Some((user_id, device_id, cwk_json, sig_json)))
+            }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(format!("Failed to load identity: {e}")),
         }
@@ -150,6 +169,66 @@ impl VoxProvider {
         Ok(ids)
     }
 
+    /// Encrypt plaintext with AES-256-GCM if an encryption key is configured.
+    /// Returns the original string if no key is set.
+    fn encrypt_if_needed(&self, plaintext: &str) -> Result<String, String> {
+        let key = match &self.encryption_key {
+            Some(k) => k,
+            None => return Ok(plaintext.to_string()),
+        };
+
+        let cipher = Aes256Gcm::new(key.into());
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+
+        let ciphertext = cipher
+            .encrypt(&nonce, plaintext.as_bytes())
+            .map_err(|e| format!("Failed to encrypt key material: {e}"))?;
+
+        let b64 = base64::engine::general_purpose::STANDARD;
+        Ok(format!(
+            "{}{}/{}",
+            ENC_PREFIX,
+            b64.encode(nonce.as_slice()),
+            b64.encode(ciphertext),
+        ))
+    }
+
+    /// Decrypt a stored value if it carries the `enc:v1:` prefix.
+    /// Plaintext values (no prefix) are returned as-is for backward compat.
+    fn decrypt_if_needed(&self, stored: &str) -> Result<String, String> {
+        if !stored.starts_with(ENC_PREFIX) {
+            return Ok(stored.to_string());
+        }
+
+        let key = self
+            .encryption_key
+            .as_ref()
+            .ok_or("Encrypted key material found but no encryption key configured")?;
+
+        let payload = &stored[ENC_PREFIX.len()..];
+        let (nonce_b64, ct_b64) = payload
+            .split_once('/')
+            .ok_or("Malformed encrypted value: missing separator")?;
+
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let nonce_bytes = b64
+            .decode(nonce_b64)
+            .map_err(|e| format!("Failed to decode nonce: {e}"))?;
+        let ciphertext = b64
+            .decode(ct_b64)
+            .map_err(|e| format!("Failed to decode ciphertext: {e}"))?;
+
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let cipher = Aes256Gcm::new(key.into());
+
+        let plaintext = cipher
+            .decrypt(nonce, ciphertext.as_ref())
+            .map_err(|e| format!("Failed to decrypt key material: {e}"))?;
+
+        String::from_utf8(plaintext)
+            .map_err(|e| format!("Decrypted key material is not valid UTF-8: {e}"))
+    }
+
     /// Export the entire SQLite database as raw bytes (for full state backup).
     ///
     /// Uses SQLite's serialize API — no temporary files are created.
@@ -166,6 +245,9 @@ impl VoxProvider {
     /// Deserializes the backup into a temporary in-memory connection, then uses
     /// the Backup API to atomically copy into a fresh connection at the original
     /// database path. No temporary files or dynamic SQL are used.
+    ///
+    /// All fallible operations complete before `self` is mutated, so on failure
+    /// the provider remains in its previous valid state.
     pub fn import_db(&mut self, data: &[u8]) -> Result<(), String> {
         // 1. Allocate sqlite3_malloc memory and copy backup data into it.
         //    OwnedData requires sqlite3_malloc-allocated memory because it
@@ -226,12 +308,16 @@ impl VoxProvider {
             )
             .map_err(|e| format!("Failed to create custom tables after restore: {e}"))?;
 
-        // 6. Replace self's connection and storage
+        // 6. Build the new Rc<Connection> and storage provider from local variables.
+        //    Only assign to self after all fallible operations above have succeeded,
+        //    so that a failure leaves self unchanged.
         let rc_conn = Rc::new(new_conn);
-        let storage =
+        let new_storage =
             SqliteStorageProvider::<JsonCodec, Rc<Connection>>::new(Rc::clone(&rc_conn));
+
+        // --- Non-fallible swap: self is only mutated here ---
         self.connection = rc_conn;
-        self.storage = storage;
+        self.storage = new_storage;
 
         Ok(())
     }

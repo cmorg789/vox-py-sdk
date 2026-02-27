@@ -3,6 +3,7 @@ mod group;
 mod identity;
 mod provider;
 
+use base64::Engine;
 use openmls::prelude::{
     CredentialWithKey, GroupId, KeyPackageIn, MlsGroup,
 };
@@ -45,10 +46,23 @@ struct MlsEngine {
 #[pymethods]
 impl MlsEngine {
     #[new]
-    #[pyo3(signature = (db_path=None))]
-    fn new(db_path: Option<&str>) -> PyResult<Self> {
+    #[pyo3(signature = (db_path=None, encryption_key=None))]
+    fn new(db_path: Option<&str>, encryption_key: Option<Vec<u8>>) -> PyResult<Self> {
         let path = db_path.unwrap_or(":memory:");
-        let provider = VoxProvider::new(path)
+
+        let enc_key: Option<[u8; 32]> = match encryption_key {
+            Some(k) => {
+                let arr: [u8; 32] = k.try_into().map_err(|_| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "encryption_key must be exactly 32 bytes",
+                    )
+                })?;
+                Some(arr)
+            }
+            None => None,
+        };
+
+        let provider = VoxProvider::new(path, enc_key)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
 
         // Attempt to restore identity from SQLite
@@ -232,9 +246,10 @@ impl MlsEngine {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
 
         let gid_bytes = mls_group.group_id().as_slice();
-        let group_id = String::from_utf8(gid_bytes.to_vec()).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid group ID: {e}"))
-        })?;
+        // UTF-8 group IDs pass through unchanged; binary IDs are base64-encoded
+        // for Python compatibility.
+        let group_id = String::from_utf8(gid_bytes.to_vec())
+            .unwrap_or_else(|e| base64::engine::general_purpose::STANDARD.encode(e.into_bytes()));
 
         // Group is automatically persisted by the SQLite storage provider
         self.provider.save_group_id(&group_id).map_err(|e| {
@@ -278,13 +293,13 @@ impl MlsEngine {
         ))
     }
 
-    /// Remove a member from a group by leaf index.
+    /// Remove a member from a group by credential identity string.
     /// Returns commit bytes.
     fn remove_member<'py>(
         &mut self,
         py: Python<'py>,
         group_id: &str,
-        member_index: u32,
+        member_identity: &str,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let sig = self
             .signature_keys
@@ -295,8 +310,9 @@ impl MlsEngine {
 
         let mut mls_group = self.load_group(group_id)?;
 
-        let commit = group::remove_member(&self.provider, &mut mls_group, &sig, member_index)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
+        let commit =
+            group::remove_member_by_identity(&self.provider, &mut mls_group, &sig, member_identity)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
 
         let bytes = commit
             .tls_serialize_detached()

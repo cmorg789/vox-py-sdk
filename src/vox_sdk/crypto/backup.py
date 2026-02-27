@@ -45,11 +45,15 @@ def encrypt_backup(data: bytes, passphrase: str) -> str:
 
     nonce = os.urandom(12)
     aesgcm = AESGCM(key)
-    ciphertext = aesgcm.encrypt(nonce, data, None)
+
+    # Bind ciphertext to envelope metadata via GCM associated data
+    salt_b64 = base64.b64encode(salt).decode()
+    aad = json.dumps({"v": _CURRENT_VERSION, "salt": salt_b64}, sort_keys=True).encode()
+    ciphertext = aesgcm.encrypt(nonce, data, aad)
 
     envelope = {
         "v": _CURRENT_VERSION,
-        "salt": base64.b64encode(salt).decode(),
+        "salt": salt_b64,
         "nonce": base64.b64encode(nonce).decode(),
         "ct": base64.b64encode(ciphertext).decode(),
     }
@@ -74,4 +78,6 @@ def decrypt_backup(blob: str, passphrase: str) -> bytes:
     key = kdf.derive(passphrase.encode())
 
     aesgcm = AESGCM(key)
-    return aesgcm.decrypt(nonce, ciphertext, None)
+    # Reconstruct the same AAD used during encryption
+    aad = json.dumps({"v": version, "salt": envelope["salt"]}, sort_keys=True).encode()
+    return aesgcm.decrypt(nonce, ciphertext, aad)
