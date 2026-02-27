@@ -117,6 +117,60 @@ jobs:
           name: wheel-media-${{ matrix.target }}
           path: crates/vox-media/dist/*.whl
 
+  build-mls:
+    name: "vox-mls (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync version from tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i.bak "s/^version = .*/version = \"$VERSION\"/" crates/vox-mls/pyproject.toml
+          sed -i.bak "s/^version = .*/version = \"$VERSION\"/" crates/vox-mls/Cargo.toml
+          rm -f crates/vox-mls/pyproject.toml.bak crates/vox-mls/Cargo.toml.bak
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: |
+            3.13
+            3.14
+
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            crates/vox-mls/target
+          key: rust-mls-${{ matrix.target }}-${{ hashFiles('crates/vox-mls/Cargo.lock') }}
+          restore-keys: rust-mls-${{ matrix.target }}-
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --interpreter python3.13 python3.14
+          manylinux: manylinux_2_34
+          sccache: true
+          working-directory: crates/vox-mls
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-mls-${{ matrix.target }}
+          path: crates/vox-mls/dist/*.whl
+
   build-sdk:
     name: "vox-sdk (pure Python)"
     runs-on: ubuntu-latest
@@ -143,7 +197,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [build-media, build-sdk]
+    needs: [build-media, build-mls, build-sdk]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -158,7 +212,7 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    needs: [build-media, build-sdk]
+    needs: [build-media, build-mls, build-sdk]
     runs-on: ubuntu-latest
     environment:
       name: pypi
