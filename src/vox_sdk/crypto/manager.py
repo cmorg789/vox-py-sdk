@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from typing import TYPE_CHECKING, Any
@@ -59,6 +60,7 @@ class CryptoManager:
         self._engine: MlsEngine = MlsEngine(db_path=db_path)
         self._device_id: str | None = None
         self._user_id: int | None = None
+        self._handlers_registered: bool = False
         # If identity was restored from SQLite, mark as initialized
         self._initialized = self._engine.identity_key() is not None
 
@@ -126,15 +128,27 @@ class CryptoManager:
         await self._create_group(group_id, other_ids)
 
     async def _create_group(self, group_id: str, member_user_ids: list[int]) -> None:
-        """Create an MLS group and add members by fetching their key packages."""
+        """Create an MLS group and add members by fetching their key packages.
+
+        Each user's devices contribute separate leaf nodes via their key
+        packages, so a single user with N devices produces N leaves.
+        """
         self._require_initialized()
 
-        # Fetch MLS key packages for all members
-        member_kps: list[bytes] = []
-        for user_id in member_user_ids:
-            kp_b64_list = await self._client.e2ee.get_mls_key_packages(user_id)
-            for kp_b64 in kp_b64_list:
-                member_kps.append(base64.b64decode(kp_b64))
+        # Fetch MLS key packages for all members concurrently (one per device)
+        async def _fetch_kps(uid: int) -> list[bytes]:
+            kp_b64_list = await self._client.e2ee.get_mls_key_packages(uid)
+            return [base64.b64decode(kp_b64) for kp_b64 in kp_b64_list]
+
+        results = await asyncio.gather(*[_fetch_kps(uid) for uid in member_user_ids])
+        member_kps: list[bytes] = [kp for batch in results for kp in batch]
+
+        log.debug(
+            "Creating group %s with %d key packages from %d users",
+            group_id,
+            len(member_kps),
+            len(member_user_ids),
+        )
 
         welcome, commit = self._engine.create_group(group_id, member_kps)
 
@@ -236,12 +250,21 @@ class CryptoManager:
     async def restore_from_server(self, passphrase: str) -> None:
         """Download and decrypt full MLS state from the server.
 
-        Restores identity and all group memberships.
+        Restores identity, all group memberships, and registers gateway
+        event handlers if not already registered. After this call the
+        manager is fully operational.
         """
         resp = await self._client.e2ee.download_key_backup()
         data = decrypt_backup(resp.encrypted_blob, passphrase)
         self._engine.import_state(data)
         self._initialized = True
+
+        # Repopulate user_id and device_id from the restored database
+        stored = self._engine.get_stored_identity()
+        if stored is not None:
+            self._user_id, self._device_id = stored
+
+        self._register_gateway_handlers()
         log.info("Full state backup restored")
 
     # --- Gateway event handlers ---
@@ -268,7 +291,14 @@ class CryptoManager:
             raise RuntimeError("CryptoManager not initialized — call initialize() first")
 
     def _register_gateway_handlers(self) -> None:
-        """Register MLS event handlers on the gateway if connected."""
+        """Register MLS event handlers on the gateway if connected.
+
+        Handlers are registered at most once to prevent duplicate event
+        processing on repeated calls to ``initialize()`` or ``restore_from_server()``.
+        """
+        if self._handlers_registered:
+            return
+
         gw = self._client.gateway
         if gw is None:
             log.debug("Gateway not connected — MLS event handlers not registered")
@@ -286,6 +316,7 @@ class CryptoManager:
         gw.add_handler("mls_welcome", _on_welcome)
         gw.add_handler("mls_commit", _on_commit)
         gw.add_handler("mls_proposal", _on_proposal)
+        self._handlers_registered = True
         log.info("MLS gateway event handlers registered")
 
     def _resolve_group_id(

@@ -27,14 +27,20 @@ def _require_crypto() -> None:
         )
 
 
+_KDF_PARAMS: dict[int, dict[str, int]] = {
+    1: {"n": 2**17, "r": 8, "p": 1},
+}
+_CURRENT_VERSION = 1
+
+
 def encrypt_backup(data: bytes, passphrase: str) -> str:
     """Encrypt data with a passphrase. Returns a base64-encoded blob."""
     _require_crypto()
 
+    params = _KDF_PARAMS[_CURRENT_VERSION]
     salt = os.urandom(16)
 
-    # Use scrypt for key derivation (available without argon2 C library)
-    kdf = Scrypt(salt=salt, length=32, n=2**17, r=8, p=1)
+    kdf = Scrypt(salt=salt, length=32, n=params["n"], r=params["r"], p=params["p"])
     key = kdf.derive(passphrase.encode())
 
     nonce = os.urandom(12)
@@ -42,7 +48,7 @@ def encrypt_backup(data: bytes, passphrase: str) -> str:
     ciphertext = aesgcm.encrypt(nonce, data, None)
 
     envelope = {
-        "v": 1,
+        "v": _CURRENT_VERSION,
         "salt": base64.b64encode(salt).decode(),
         "nonce": base64.b64encode(nonce).decode(),
         "ct": base64.b64encode(ciphertext).decode(),
@@ -55,14 +61,16 @@ def decrypt_backup(blob: str, passphrase: str) -> bytes:
     _require_crypto()
 
     envelope = json.loads(base64.b64decode(blob))
-    if envelope.get("v") != 1:
-        raise ValueError(f"Unsupported backup format version: {envelope.get('v')}")
+    version = envelope.get("v")
+    if version not in _KDF_PARAMS:
+        raise ValueError(f"Unsupported backup format version: {version}")
 
+    params = _KDF_PARAMS[version]
     salt = base64.b64decode(envelope["salt"])
     nonce = base64.b64decode(envelope["nonce"])
     ciphertext = base64.b64decode(envelope["ct"])
 
-    kdf = Scrypt(salt=salt, length=32, n=2**17, r=8, p=1)
+    kdf = Scrypt(salt=salt, length=32, n=params["n"], r=params["r"], p=params["p"])
     key = kdf.derive(passphrase.encode())
 
     aesgcm = AESGCM(key)

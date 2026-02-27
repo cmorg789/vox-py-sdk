@@ -198,6 +198,9 @@ impl MlsEngine {
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
 
         // Group is automatically persisted by the SQLite storage provider
+        self.provider.save_group_id(group_id).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)
+        })?;
 
         let welcome_bytes = welcome
             .map(|w| {
@@ -234,6 +237,10 @@ impl MlsEngine {
         })?;
 
         // Group is automatically persisted by the SQLite storage provider
+        self.provider.save_group_id(&group_id).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)
+        })?;
+
         Ok(group_id)
     }
 
@@ -386,6 +393,18 @@ impl MlsEngine {
             .map(|sk| PyBytes::new(py, &sk.to_public_vec()))
     }
 
+    /// Get the stored identity metadata (user_id, device_id) from SQLite,
+    /// or None if no identity is stored.
+    fn get_stored_identity(&self) -> PyResult<Option<(u64, String)>> {
+        match self.provider.load_identity() {
+            Ok(Some((user_id, device_id, _, _))) => Ok(Some((user_id, device_id))),
+            Ok(None) => Ok(None),
+            Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                format!("Failed to load stored identity: {e}"),
+            )),
+        }
+    }
+
     /// Export the full MLS state (identity + all groups) as raw SQLite database bytes.
     ///
     /// This is the recommended backup method — it preserves group memberships,
@@ -421,6 +440,14 @@ impl MlsEngine {
                             "Failed to deserialize restored signature keys: {e:?}"
                         ))
                     })?;
+
+                // Re-store the signature key pair so OpenMLS can find it
+                sig.store(self.provider.storage()).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "Failed to re-store signature keys after restore: {e:?}"
+                    ))
+                })?;
+
                 self.credential_with_key = Some(cwk);
                 self.signature_keys = Some(sig);
             }
@@ -441,6 +468,11 @@ impl MlsEngine {
 
     /// Export the identity only (private + public key material) as serialized bytes.
     /// Use `export_state()` for a full backup including group memberships.
+    ///
+    /// # Security
+    ///
+    /// The returned bytes contain **unencrypted private key material**.
+    /// Callers must encrypt the output before persisting or transmitting it.
     fn export_identity<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let sig = self.signature_keys.as_ref().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Identity not initialized")
@@ -459,6 +491,11 @@ impl MlsEngine {
 
     /// Import a previously exported identity (private + public key material).
     /// Also persists to the vox_identity SQLite table so it survives engine restarts.
+    ///
+    /// # Security
+    ///
+    /// The input bytes must come from a trusted source. Importing a malicious
+    /// payload could compromise the identity of this device.
     fn import_identity(&mut self, data: Vec<u8>, user_id: u64, device_id: &str) -> PyResult<()> {
         let payload: serde_json::Value = serde_json::from_slice(&data)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("{e:?}")))?;

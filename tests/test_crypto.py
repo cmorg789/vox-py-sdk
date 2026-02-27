@@ -124,8 +124,6 @@ class TestMlsEngine:
 
     def test_group_exists_and_list(self):
         """Create group, verify group_exists() and list_groups()."""
-        import json
-
         engine = self.MlsEngine(db_path=None)
         engine.generate_identity(1, "device-a")
 
@@ -138,9 +136,7 @@ class TestMlsEngine:
         assert engine.group_exists("my-group")
         groups = engine.list_groups()
         assert len(groups) == 1
-        # list_groups returns serialized openmls GroupId; decode to verify
-        decoded = bytes(json.loads(groups[0])["value"]["vec"]).decode()
-        assert decoded == "my-group"
+        assert groups[0] == "my-group"
 
     def test_state_export_import(self):
         """Create group, export_state(), new engine, import_state(), verify."""
@@ -172,3 +168,142 @@ class TestMlsEngine:
         engine2 = self.MlsEngine(db_path=None)
         engine2.import_identity(bytes(identity), 1, "device-a")
         assert engine2.identity_key() == original_ik
+
+    def test_encrypt_after_state_import(self):
+        """Encrypt/decrypt still works after export_state + import_state."""
+        alice = self.MlsEngine(db_path=None)
+        alice.generate_identity(1, "alice-device")
+
+        bob = self.MlsEngine(db_path=None)
+        bob.generate_identity(2, "bob-device")
+
+        bob_kps = bob.generate_key_packages(1)
+        welcome, _commit = alice.create_group("restore-group", [bytes(bob_kps[0])])
+        bob.join_group(bytes(welcome))
+
+        # Alice encrypts a message before export
+        msg1 = b"before export"
+        ct1 = alice.encrypt("restore-group", msg1)
+
+        # Alice exports state, creates new engine, imports state
+        state = alice.export_state()
+        alice2 = self.MlsEngine(db_path=None)
+        alice2.import_state(bytes(state))
+
+        # Alice encrypts a second message on the restored engine
+        msg2 = b"after import"
+        ct2 = alice2.encrypt("restore-group", msg2)
+
+        # Bob decrypts both messages
+        assert bytes(bob.decrypt("restore-group", bytes(ct1))) == msg1
+        assert bytes(bob.decrypt("restore-group", bytes(ct2))) == msg2
+
+    def test_add_member_post_creation(self):
+        """Create 2-person group, add a third member, verify encrypt/decrypt for all."""
+        alice = self.MlsEngine(db_path=None)
+        alice.generate_identity(1, "alice-device")
+
+        bob = self.MlsEngine(db_path=None)
+        bob.generate_identity(2, "bob-device")
+
+        charlie = self.MlsEngine(db_path=None)
+        charlie.generate_identity(3, "charlie-device")
+
+        # Alice creates group with Bob
+        bob_kps = bob.generate_key_packages(1)
+        welcome, _commit = alice.create_group("add-test", [bytes(bob_kps[0])])
+        bob.join_group(bytes(welcome))
+
+        # Alice adds Charlie
+        charlie_kps = charlie.generate_key_packages(1)
+        welcome2, commit2 = alice.add_member("add-test", bytes(charlie_kps[0]))
+        charlie.join_group(bytes(welcome2))
+        bob.process_message("add-test", bytes(commit2))
+
+        # Alice encrypts, Bob and Charlie both decrypt
+        msg = b"hello everyone"
+        ct = alice.encrypt("add-test", msg)
+        assert bytes(bob.decrypt("add-test", bytes(ct))) == msg
+        assert bytes(charlie.decrypt("add-test", bytes(ct))) == msg
+
+    def test_remove_member(self):
+        """Create 3-person group, remove one, verify removed member cannot decrypt."""
+        alice = self.MlsEngine(db_path=None)
+        alice.generate_identity(1, "alice-device")
+
+        bob = self.MlsEngine(db_path=None)
+        bob.generate_identity(2, "bob-device")
+
+        charlie = self.MlsEngine(db_path=None)
+        charlie.generate_identity(3, "charlie-device")
+
+        # Alice creates group with Bob and Charlie
+        bob_kps = bob.generate_key_packages(1)
+        charlie_kps = charlie.generate_key_packages(1)
+        welcome, _commit = alice.create_group(
+            "remove-test", [bytes(bob_kps[0]), bytes(charlie_kps[0])]
+        )
+        bob.join_group(bytes(welcome))
+        charlie.join_group(bytes(welcome))
+
+        # Alice removes Charlie (leaf index 2)
+        commit = alice.remove_member("remove-test", 2)
+        bob.process_message("remove-test", bytes(commit))
+
+        # Alice encrypts a new message
+        msg = b"after removal"
+        ct = alice.encrypt("remove-test", msg)
+
+        # Bob can still decrypt
+        assert bytes(bob.decrypt("remove-test", bytes(ct))) == msg
+
+        # Charlie cannot decrypt (her group state is stale)
+        with pytest.raises(Exception):
+            charlie.decrypt("remove-test", bytes(ct))
+
+    def test_process_commit(self):
+        """Alice adds Charlie, Bob processes the commit, Bob can still encrypt/decrypt."""
+        alice = self.MlsEngine(db_path=None)
+        alice.generate_identity(1, "alice-device")
+
+        bob = self.MlsEngine(db_path=None)
+        bob.generate_identity(2, "bob-device")
+
+        charlie = self.MlsEngine(db_path=None)
+        charlie.generate_identity(3, "charlie-device")
+
+        # Alice creates group with Bob
+        bob_kps = bob.generate_key_packages(1)
+        welcome, _commit = alice.create_group("commit-test", [bytes(bob_kps[0])])
+        bob.join_group(bytes(welcome))
+
+        # Alice adds Charlie
+        charlie_kps = charlie.generate_key_packages(1)
+        welcome2, commit2 = alice.add_member("commit-test", bytes(charlie_kps[0]))
+        charlie.join_group(bytes(welcome2))
+
+        # Bob processes the commit
+        result = bob.process_message("commit-test", bytes(commit2))
+        assert result.kind == "commit"
+
+        # Bob encrypts, Alice and Charlie decrypt
+        msg = b"bob says hi"
+        ct = bob.encrypt("commit-test", msg)
+        assert bytes(alice.decrypt("commit-test", bytes(ct))) == msg
+        assert bytes(charlie.decrypt("commit-test", bytes(ct))) == msg
+
+    def test_decrypt_wrong_group(self):
+        """Attempt decrypt with wrong group ID, expect PyKeyError."""
+        engine = self.MlsEngine(db_path=None)
+        engine.generate_identity(1, "device-a")
+        engine.create_group("real-group", [])
+
+        with pytest.raises(KeyError):
+            engine.decrypt("nonexistent-group", b"fake-ciphertext")
+
+    def test_encrypt_without_identity(self):
+        """Create engine without identity, attempt encrypt, expect error."""
+        engine = self.MlsEngine(db_path=None)
+
+        with pytest.raises(RuntimeError):
+            engine.encrypt("some-group", b"hello")

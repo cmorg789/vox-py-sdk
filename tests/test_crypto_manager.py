@@ -181,6 +181,50 @@ class TestBackup:
         base64.b64decode(uploaded_blob)
 
 
+class TestHandlerDedup:
+    async def test_initialize_does_not_double_register_handlers(self):
+        """Calling initialize() twice should register handlers only once."""
+        client = _make_mock_client()
+        cm = CryptoManager(client, db_path=None)
+
+        await cm.initialize(user_id=1, device_id="dev-1")
+        first_count = client.gateway.add_handler.call_count
+
+        await cm.initialize(user_id=1, device_id="dev-1")
+        assert client.gateway.add_handler.call_count == first_count
+
+
+class TestRestore:
+    async def test_restore_repopulates_user_and_device_id(self):
+        """After restore_from_server, _user_id and _device_id are set."""
+        pytest.importorskip("cryptography")
+        from vox_sdk.crypto.backup import encrypt_backup
+
+        client = _make_mock_client()
+
+        # Build a real engine, generate identity, export state
+        source = CryptoManager(client, db_path=None)
+        await source.initialize(user_id=42, device_id="restored-dev")
+        state_bytes = bytes(source._engine.export_state())
+        blob = encrypt_backup(state_bytes, "pw")
+
+        # Set up download mock to return the encrypted blob
+        resp = MagicMock()
+        resp.encrypted_blob = blob
+        client.e2ee.download_key_backup = AsyncMock(return_value=resp)
+
+        # Create a fresh manager and restore
+        cm = CryptoManager(client, db_path=None)
+        assert cm._user_id is None
+        assert cm._device_id is None
+
+        await cm.restore_from_server("pw")
+
+        assert cm._user_id == 42
+        assert cm._device_id == "restored-dev"
+        assert cm.initialized
+
+
 class TestRefreshKeyPackages:
     async def test_refresh_key_packages(self):
         """Verify upload_mls_key_packages called with 100 packages."""
