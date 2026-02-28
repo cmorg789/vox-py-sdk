@@ -38,15 +38,6 @@ from vox_sdk.models.channels import (
     ThreadResponse,
 )
 from vox_sdk.models.dms import DMListResponse, DMResponse
-from vox_sdk.models.e2ee import (
-    AddDeviceResponse,
-    DeviceInfo,
-    DeviceListResponse,
-    DevicePrekey,
-    KeyBackupResponse,
-    PairDeviceResponse,
-    PrekeyBundleResponse,
-)
 from vox_sdk.models.emoji import (
     EmojiListResponse,
     EmojiResponse,
@@ -157,14 +148,6 @@ __all__ = [
     # dms
     "DMListResponse",
     "DMResponse",
-    # e2ee
-    "AddDeviceResponse",
-    "DeviceInfo",
-    "DeviceListResponse",
-    "DevicePrekey",
-    "KeyBackupResponse",
-    "PairDeviceResponse",
-    "PrekeyBundleResponse",
     # emoji
     "EmojiListResponse",
     "EmojiResponse",

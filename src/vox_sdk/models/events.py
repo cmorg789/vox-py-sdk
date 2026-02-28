@@ -51,7 +51,6 @@ class MessageCreate(GatewayEvent):
     webhook_id: int | None = None
     embed: dict | None = None
     attachments: list[dict] = field(default_factory=list)
-    opaque_blob: str | None = None
 
 @dataclass
 class MessageUpdate(GatewayEvent):
@@ -427,57 +426,6 @@ class MediaTokenRefresh(GatewayEvent):
     media_token: str = ""
 
 
-# --- E2EE ---
-
-@dataclass
-class MLSWelcome(GatewayEvent):
-    data: str = ""
-
-@dataclass
-class MLSCommit(GatewayEvent):
-    data: str = ""
-    group_id: str = ""
-
-@dataclass
-class MLSProposal(GatewayEvent):
-    data: str = ""
-    group_id: str = ""
-
-@dataclass
-class DeviceListUpdate(GatewayEvent):
-    devices: list[dict] = field(default_factory=list)
-
-@dataclass
-class DevicePairPrompt(GatewayEvent):
-    device_name: str = ""
-    ip: str = ""
-    location: str = ""
-    pair_id: str = ""
-
-@dataclass
-class CPaceISI(GatewayEvent):
-    pair_id: str = ""
-    data: str = ""
-
-@dataclass
-class CPaceRSI(GatewayEvent):
-    pair_id: str = ""
-    data: str = ""
-
-@dataclass
-class CPaceConfirm(GatewayEvent):
-    pair_id: str = ""
-    data: str = ""
-
-@dataclass
-class CPaceNewDeviceKey(GatewayEvent):
-    pair_id: str = ""
-    data: str = ""
-    nonce: str = ""
-
-@dataclass
-class KeyResetNotify(GatewayEvent):
-    user_id: int = 0
 
 
 # --- Webhooks ---
@@ -614,16 +562,7 @@ _EVENT_MAP: dict[str, type[GatewayEvent]] = {
     "stage_topic_update": StageTopicUpdate,
     "stage_response": StageResponse,
     "media_token_refresh": MediaTokenRefresh,
-    "mls_welcome": MLSWelcome,
-    "mls_commit": MLSCommit,
-    "mls_proposal": MLSProposal,
-    "device_list_update": DeviceListUpdate,
-    "device_pair_prompt": DevicePairPrompt,
-    "cpace_isi": CPaceISI,
-    "cpace_rsi": CPaceRSI,
-    "cpace_confirm": CPaceConfirm,
-    "cpace_new_device_key": CPaceNewDeviceKey,
-    "key_reset_notify": KeyResetNotify,
+
     "webhook_create": WebhookCreate,
     "webhook_update": WebhookUpdate,
     "webhook_delete": WebhookDelete,

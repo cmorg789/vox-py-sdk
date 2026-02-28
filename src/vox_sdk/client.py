@@ -35,7 +35,7 @@ class Client:
         self._dms: Any = None
         self._webhooks: Any = None
         self._bots: Any = None
-        self._e2ee: Any = None
+
         self._moderation: Any = None
         self._files: Any = None
         self._federation: Any = None
@@ -46,7 +46,6 @@ class Client:
         self._gifs: Any = None
 
         self._gateway: Any = None
-        self._crypto: Any = None
 
     # --- Convenience login ---
 
@@ -137,13 +136,6 @@ class Client:
         return self._bots
 
     @property
-    def e2ee(self) -> Any:
-        if self._e2ee is None:
-            from vox_sdk.api.e2ee import E2EEAPI
-            self._e2ee = E2EEAPI(self.http)
-        return self._e2ee
-
-    @property
     def moderation(self) -> Any:
         if self._moderation is None:
             from vox_sdk.api.moderation import ModerationAPI
@@ -198,13 +190,6 @@ class Client:
             from vox_sdk.api.embeds import EmbedsAPI
             self._embeds = EmbedsAPI(self.http)
         return self._embeds
-
-    @property
-    def crypto(self) -> Any:
-        if self._crypto is None:
-            from vox_sdk.crypto import CryptoManager
-            self._crypto = CryptoManager(self)
-        return self._crypto
 
     @property
     def gateway(self) -> Any:

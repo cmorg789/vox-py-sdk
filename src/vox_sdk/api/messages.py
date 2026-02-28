@@ -46,7 +46,6 @@ class MessagesAPI:
         attachments: list[str] | None = None,
         mentions: list[int] | None = None,
         embed: str | None = None,
-        opaque_blob: str | None = None,
     ) -> SendMessageResponse:
         payload: dict[str, Any] = {}
         if body is not None:
@@ -59,8 +58,6 @@ class MessagesAPI:
             payload["mentions"] = mentions
         if embed is not None:
             payload["embed"] = embed
-        if opaque_blob is not None:
-            payload["opaque_blob"] = opaque_blob
         r = await self._http.post(f"/api/v1/feeds/{feed_id}/messages", json=payload)
         return SendMessageResponse.model_validate(r.json())
 

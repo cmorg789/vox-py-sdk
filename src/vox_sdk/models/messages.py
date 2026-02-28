@@ -22,7 +22,6 @@ class MessageResponse(VoxModel):
     thread_id: int | None = None
     author_id: int | None = None
     body: str | None = None
-    opaque_blob: str | None = None
     timestamp: int = 0
     reply_to: int | None = None
     attachments: list[FileResponse] = []

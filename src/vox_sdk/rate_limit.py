@@ -29,7 +29,7 @@ _PREFIX_MAP: list[tuple[str, str]] = [
     ("/api/v1/voice", "voice"),
     ("/api/v1/server", "server"),
     ("/api/v1/bots", "bots"),
-    ("/api/v1/keys", "e2ee"),
+
     ("/api/v1/dms", "messages"),
     ("/api/v1/files", "files"),
     ("/api/v1/federation", "federation"),
