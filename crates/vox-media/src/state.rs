@@ -35,6 +35,8 @@ struct ConnectParams {
     cert_der: Option<Vec<u8>>,
     idle_timeout_secs: u64,
     datagram_buffer_size: usize,
+    input_device: Option<String>,
+    output_device: Option<String>,
 }
 
 /// Video configuration (set before enabling video).
@@ -122,6 +124,8 @@ async fn establish_session(
     cert_der: Option<Vec<u8>>,
     idle_timeout_secs: u64,
     datagram_buffer_size: usize,
+    input_device: Option<String>,
+    output_device: Option<String>,
     video_frame_queue: VideoFrameQueue,
 ) -> Result<ActiveSession, Box<dyn std::error::Error>> {
     // Parse URL — strip optional quic:// prefix
@@ -161,10 +165,10 @@ async fn establish_session(
     connection.send_datagram(Bytes::from(token))?;
 
     // Start audio capture (960 samples = 20ms at 48kHz)
-    let (capture_stream, capture_rx) = audio::start_capture(960)?;
+    let (capture_stream, capture_rx) = audio::start_capture(input_device.as_deref(), 960)?;
 
     // Start audio playback
-    let (playback_stream, playback_tx) = audio::start_playback()?;
+    let (playback_stream, playback_tx) = audio::start_playback(output_device.as_deref())?;
 
     // Create Opus encoder
     let encoder = codec::OpusEncoder::new()?;
@@ -221,6 +225,8 @@ async fn reconnect_with_backoff(
             params.cert_der.clone(),
             params.idle_timeout_secs,
             params.datagram_buffer_size,
+            params.input_device.clone(),
+            params.output_device.clone(),
             video_frames.clone(),
         ).await {
             Ok(s) => {
@@ -266,7 +272,7 @@ pub async fn run_media_loop(
                     cmd = cmd_rx.recv() => {
                         match cmd {
                             None => break,
-                            Some(MediaCommand::Connect { url, token, room_id, user_id, cert_der, idle_timeout_secs, datagram_buffer_size }) => {
+                            Some(MediaCommand::Connect { url, token, room_id, user_id, cert_der, idle_timeout_secs, datagram_buffer_size, input_device, output_device }) => {
                                 tracing::info!("Connecting to SFU at {}", url);
                                 let params = ConnectParams {
                                     url: url.clone(),
@@ -276,8 +282,10 @@ pub async fn run_media_loop(
                                     cert_der: cert_der.clone(),
                                     idle_timeout_secs,
                                     datagram_buffer_size,
+                                    input_device: input_device.clone(),
+                                    output_device: output_device.clone(),
                                 };
-                                match establish_session(url, token, room_id, user_id, cert_der, idle_timeout_secs, datagram_buffer_size, video_frames.clone()).await {
+                                match establish_session(url, token, room_id, user_id, cert_der, idle_timeout_secs, datagram_buffer_size, input_device, output_device, video_frames.clone()).await {
                                     Ok(s) => {
                                         tracing::info!("Connected to SFU");
                                         push_event(&events, MediaEvent::Connected);
@@ -321,7 +329,7 @@ pub async fn run_media_loop(
                     cmd = cmd_rx.recv() => {
                         match cmd {
                             None => break,
-                            Some(MediaCommand::Connect { url, token, room_id, user_id, cert_der, idle_timeout_secs, datagram_buffer_size }) => {
+                            Some(MediaCommand::Connect { url, token, room_id, user_id, cert_der, idle_timeout_secs, datagram_buffer_size, input_device, output_device }) => {
                                 tracing::info!("Reconnecting to SFU at {}", url);
                                 session = None;
                                 let params = ConnectParams {
@@ -332,8 +340,10 @@ pub async fn run_media_loop(
                                     cert_der: cert_der.clone(),
                                     idle_timeout_secs,
                                     datagram_buffer_size,
+                                    input_device: input_device.clone(),
+                                    output_device: output_device.clone(),
                                 };
-                                match establish_session(url, token, room_id, user_id, cert_der, idle_timeout_secs, datagram_buffer_size, video_frames.clone()).await {
+                                match establish_session(url, token, room_id, user_id, cert_der, idle_timeout_secs, datagram_buffer_size, input_device, output_device, video_frames.clone()).await {
                                     Ok(new_s) => {
                                         tracing::info!("Connected to SFU");
                                         push_event(&events, MediaEvent::Connected);

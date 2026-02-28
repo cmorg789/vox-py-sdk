@@ -21,6 +21,8 @@ enum MediaCommand {
         cert_der: Option<Vec<u8>>,
         idle_timeout_secs: u64,
         datagram_buffer_size: usize,
+        input_device: Option<String>,
+        output_device: Option<String>,
     },
     Disconnect,
     SetMute(bool),
@@ -166,8 +168,8 @@ impl VoxMediaClient {
     }
 
     /// Connect to a voice room via the SFU.
-    #[pyo3(signature = (url, token, room_id, user_id, cert_der=None, idle_timeout_secs=30, datagram_buffer_size=65535))]
-    fn connect(&self, url: &str, token: &str, room_id: u32, user_id: u32, cert_der: Option<Vec<u8>>, idle_timeout_secs: u64, datagram_buffer_size: usize) -> PyResult<()> {
+    #[pyo3(signature = (url, token, room_id, user_id, cert_der=None, idle_timeout_secs=30, datagram_buffer_size=65535, input_device=None, output_device=None))]
+    fn connect(&self, url: &str, token: &str, room_id: u32, user_id: u32, cert_der: Option<Vec<u8>>, idle_timeout_secs: u64, datagram_buffer_size: usize, input_device: Option<String>, output_device: Option<String>) -> PyResult<()> {
         self.send_cmd(MediaCommand::Connect {
             url: url.to_string(),
             token: token.to_string(),
@@ -176,6 +178,8 @@ impl VoxMediaClient {
             cert_der,
             idle_timeout_secs,
             datagram_buffer_size,
+            input_device,
+            output_device,
         })
     }
 

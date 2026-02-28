@@ -237,17 +237,71 @@ fn upmix_from_mono_f32(mono: &[i16], channels: u16) -> Vec<f32> {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Start capturing audio from the default input device.
+/// Get the human-readable name from a cpal device via its description.
+fn device_display_name(device: &cpal::Device) -> String {
+    device
+        .description()
+        .map_or_else(|_| "<unknown>".into(), |d| d.name().to_string())
+}
+
+/// Find an input device by name, falling back to the default if not found.
+fn find_input_device(
+    host: &cpal::Host,
+    device_name: Option<&str>,
+) -> Result<cpal::Device, Box<dyn std::error::Error>> {
+    if let Some(name) = device_name {
+        if let Ok(devices) = host.input_devices() {
+            for dev in devices {
+                if device_display_name(&dev) == name {
+                    tracing::info!("Found requested input device: {}", name);
+                    return Ok(dev);
+                }
+            }
+        }
+        tracing::warn!(
+            "Requested input device {:?} not found, falling back to default",
+            name
+        );
+    }
+    host.default_input_device()
+        .ok_or_else(|| "No input device available".into())
+}
+
+/// Find an output device by name, falling back to the default if not found.
+fn find_output_device(
+    host: &cpal::Host,
+    device_name: Option<&str>,
+) -> Result<cpal::Device, Box<dyn std::error::Error>> {
+    if let Some(name) = device_name {
+        if let Ok(devices) = host.output_devices() {
+            for dev in devices {
+                if device_display_name(&dev) == name {
+                    tracing::info!("Found requested output device: {}", name);
+                    return Ok(dev);
+                }
+            }
+        }
+        tracing::warn!(
+            "Requested output device {:?} not found, falling back to default",
+            name
+        );
+    }
+    host.default_output_device()
+        .ok_or_else(|| "No output device available".into())
+}
+
+/// Start capturing audio from an input device.
+/// If `device_name` is provided, attempts to find a matching device by name,
+/// falling back to the default input device if not found.
 /// Returns a receiver that yields PCM frames at 48 kHz mono.
 pub fn start_capture(
+    device_name: Option<&str>,
     frame_size: usize,
 ) -> Result<(cpal::Stream, mpsc::UnboundedReceiver<AudioSamples>), Box<dyn std::error::Error>> {
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or("No input device available")?;
+    let device = find_input_device(&host, device_name)?;
 
-    let dev_name = device.description().map_or_else(|_| "<unknown>".into(), |d| d.name().to_string());
+    let dev_name = device_display_name(&device);
     tracing::info!("Audio capture device: {}", dev_name);
 
     let neg = negotiate_config(device.supported_input_configs()?)?;
@@ -315,16 +369,17 @@ pub fn start_capture(
     Ok((stream, rx))
 }
 
-/// Start playback on the default output device.
+/// Start playback on an output device.
+/// If `device_name` is provided, attempts to find a matching device by name,
+/// falling back to the default output device if not found.
 /// Accepts PCM frames at 48 kHz mono and handles resampling/up-mixing.
 pub fn start_playback(
+    device_name: Option<&str>,
 ) -> Result<(cpal::Stream, mpsc::UnboundedSender<AudioSamples>), Box<dyn std::error::Error>> {
     let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .ok_or("No output device available")?;
+    let device = find_output_device(&host, device_name)?;
 
-    let dev_name = device.description().map_or_else(|_| "<unknown>".into(), |d| d.name().to_string());
+    let dev_name = device_display_name(&device);
     tracing::info!("Audio playback device: {}", dev_name);
 
     let neg = negotiate_config(device.supported_output_configs()?)?;
