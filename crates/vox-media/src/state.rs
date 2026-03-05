@@ -2,7 +2,7 @@
 
 use crate::{
     audio, codec, push_event, push_video_frame, quic, video, EventQueue, MediaCommand,
-    MediaEvent, VideoFrameOutput, VideoFrameQueue,
+    MediaEvent, VideoFrameOutput, VideoFrameQueue, VideoNotifyFd,
 };
 use bytes::Bytes;
 use std::collections::HashMap;
@@ -113,6 +113,7 @@ struct ActiveSession {
     camera_rx: Option<mpsc::Receiver<video::CapturedFrame>>,
     camera_stop: Option<video::CameraStopHandle>,
     video_frame_queue: VideoFrameQueue,
+    video_notify: VideoNotifyFd,
 }
 
 /// Establish a QUIC connection and start the audio pipeline.
@@ -127,6 +128,7 @@ async fn establish_session(
     input_device: Option<String>,
     output_device: Option<String>,
     video_frame_queue: VideoFrameQueue,
+    video_notify: VideoNotifyFd,
 ) -> Result<ActiveSession, Box<dyn std::error::Error>> {
     // Parse URL — strip optional quic:// prefix
     let addr_str = url
@@ -202,6 +204,7 @@ async fn establish_session(
         camera_rx: None,
         camera_stop: None,
         video_frame_queue,
+        video_notify,
     })
 }
 
@@ -210,6 +213,7 @@ async fn reconnect_with_backoff(
     params: &ConnectParams,
     events: &EventQueue,
     video_frames: &VideoFrameQueue,
+    video_notify: &VideoNotifyFd,
 ) -> Option<ActiveSession> {
     for attempt in 1..=MAX_RECONNECT_ATTEMPTS {
         let delay_secs = std::cmp::min(2u64.pow(attempt - 1), MAX_BACKOFF_SECS);
@@ -228,6 +232,7 @@ async fn reconnect_with_backoff(
             params.input_device.clone(),
             params.output_device.clone(),
             video_frames.clone(),
+            video_notify.clone(),
         ).await {
             Ok(s) => {
                 push_event(events, MediaEvent::Connected);
@@ -256,6 +261,7 @@ pub async fn run_media_loop(
     cancel: CancellationToken,
     events: EventQueue,
     video_frames: VideoFrameQueue,
+    video_notify: VideoNotifyFd,
 ) {
     let mut session: Option<ActiveSession> = None;
     let mut last_connect_params: Option<ConnectParams> = None;
@@ -285,7 +291,7 @@ pub async fn run_media_loop(
                                     input_device: input_device.clone(),
                                     output_device: output_device.clone(),
                                 };
-                                match establish_session(url, token, room_id, user_id, cert_der, idle_timeout_secs, datagram_buffer_size, input_device, output_device, video_frames.clone()).await {
+                                match establish_session(url, token, room_id, user_id, cert_der, idle_timeout_secs, datagram_buffer_size, input_device, output_device, video_frames.clone(), video_notify.clone()).await {
                                     Ok(s) => {
                                         tracing::info!("Connected to SFU");
                                         push_event(&events, MediaEvent::Connected);
@@ -343,7 +349,7 @@ pub async fn run_media_loop(
                                     input_device: input_device.clone(),
                                     output_device: output_device.clone(),
                                 };
-                                match establish_session(url, token, room_id, user_id, cert_der, idle_timeout_secs, datagram_buffer_size, input_device, output_device, video_frames.clone()).await {
+                                match establish_session(url, token, room_id, user_id, cert_der, idle_timeout_secs, datagram_buffer_size, input_device, output_device, video_frames.clone(), video_notify.clone()).await {
                                     Ok(new_s) => {
                                         tracing::info!("Connected to SFU");
                                         push_event(&events, MediaEvent::Connected);
@@ -424,7 +430,7 @@ pub async fn run_media_loop(
                                 session = None;
 
                                 if let Some(ref params) = last_connect_params {
-                                    if let Some(new_session) = reconnect_with_backoff(params, &events, &video_frames).await {
+                                    if let Some(new_session) = reconnect_with_backoff(params, &events, &video_frames, &video_notify).await {
                                         session = Some(new_session);
                                     } else {
                                         last_connect_params = None;
@@ -461,7 +467,7 @@ fn handle_set_video(session: &mut ActiveSession, enabled: bool, events: &EventQu
             fps: session.video_config.fps,
         };
 
-        match video::start_camera_capture(cfg) {
+        match video::start_camera_capture(cfg, session.video_frame_queue.clone(), session.video_notify.clone()) {
             Ok((rx, stop)) => {
                 session.camera_rx = Some(rx);
                 session.camera_stop = Some(stop);
@@ -472,24 +478,10 @@ fn handle_set_video(session: &mut ActiveSession, enabled: bool, events: &EventQu
             }
         }
 
-        match codec::Av1Encoder::new(
-            session.video_config.width as usize,
-            session.video_config.height as usize,
-            session.video_config.fps,
-            session.video_config.bitrate_kbps,
-        ) {
-            Ok(enc) => {
-                session.video_encoder = Some(enc);
-            }
-            Err(e) => {
-                // Stop camera if encoder fails
-                session.camera_rx = None;
-                session.camera_stop = None;
-                push_event(events, MediaEvent::VideoError(format!("AV1 encoder init failed: {e}")));
-                return;
-            }
-        }
-
+        // Encoder is created lazily in handle_camera_frame once we know
+        // the actual camera resolution (which may differ from the requested
+        // config, e.g. when "Native" 0×0 is used).
+        session.video_encoder = None;
         session.video = true;
         session.video_sequence = 0;
         session.video_timestamp = 0;
@@ -510,13 +502,36 @@ fn handle_camera_frame(
     frame: video::CapturedFrame,
     events: &EventQueue,
 ) {
-    // Push local preview (user_id = 0)
-    push_video_frame(&session.video_frame_queue, VideoFrameOutput {
-        user_id: 0,
-        width: frame.width,
-        height: frame.height,
-        rgba: frame.rgba,
-    });
+    // Local preview is pushed directly from the camera thread for zero latency.
+
+    // Lazily create encoder on the first frame so we use the camera's actual
+    // resolution (handles "Native" / 0×0 config and format negotiation).
+    if session.video_encoder.is_none() {
+        match codec::Av1Encoder::new(
+            frame.width as usize,
+            frame.height as usize,
+            session.video_config.fps,
+            session.video_config.bitrate_kbps,
+        ) {
+            Ok(enc) => {
+                tracing::info!(
+                    "AV1 encoder created: {}x{} @ {}fps {}kbps",
+                    frame.width, frame.height,
+                    session.video_config.fps, session.video_config.bitrate_kbps,
+                );
+                session.video_encoder = Some(enc);
+            }
+            Err(e) => {
+                tracing::error!("AV1 encoder init failed: {e}");
+                push_event(events, MediaEvent::VideoError(format!("AV1 encoder init failed: {e}")));
+                // Stop camera since we can't encode
+                session.camera_rx = None;
+                session.camera_stop = None;
+                session.video = false;
+                return;
+            }
+        }
+    }
 
     // Encode and send
     let encoder = match &mut session.video_encoder {
@@ -703,6 +718,7 @@ fn receive_video_fragment(
         Ok(Some(decoded)) => {
             push_video_frame(
                 &session.video_frame_queue,
+                &session.video_notify,
                 VideoFrameOutput {
                     user_id: reassembled.user_id,
                     width: decoded.width,

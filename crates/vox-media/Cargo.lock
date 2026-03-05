@@ -2326,6 +2326,7 @@ dependencies = [
  "bytes",
  "cpal",
  "dav1d",
+ "libc",
  "nokhwa",
  "opus",
  "pyo3",

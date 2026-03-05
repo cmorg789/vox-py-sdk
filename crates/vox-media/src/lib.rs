@@ -7,6 +7,7 @@ mod video;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -90,13 +91,25 @@ pub(crate) struct VideoFrameOutput {
 /// Thread-safe queue of decoded video frames.
 pub(crate) type VideoFrameQueue = Arc<Mutex<VecDeque<VideoFrameOutput>>>;
 
+/// File descriptor to notify when a video frame is ready (-1 = disabled).
+pub(crate) type VideoNotifyFd = Arc<AtomicI32>;
+
 /// Push a video frame onto the queue (bounded to 8 frames, drops oldest).
-pub(crate) fn push_video_frame(queue: &VideoFrameQueue, frame: VideoFrameOutput) {
+/// If a notify fd is set, writes a single byte to wake the consumer.
+pub(crate) fn push_video_frame(queue: &VideoFrameQueue, notify: &VideoNotifyFd, frame: VideoFrameOutput) {
     if let Ok(mut q) = queue.lock() {
         if q.len() >= 8 {
             q.pop_front();
         }
         q.push_back(frame);
+    }
+    let fd = notify.load(Ordering::Relaxed);
+    if fd >= 0 {
+        // Best-effort write; if the pipe is full, the consumer will still
+        // drain all queued frames on the next wakeup.
+        unsafe {
+            libc::write(fd, b"\x01".as_ptr() as *const libc::c_void, 1);
+        }
     }
 }
 
@@ -111,6 +124,7 @@ struct VoxMediaClient {
     rt_handle: Option<std::thread::JoinHandle<()>>,
     events: EventQueue,
     video_frames: VideoFrameQueue,
+    video_notify: VideoNotifyFd,
     muted: bool,
     deafened: bool,
     video: bool,
@@ -127,6 +141,7 @@ impl VoxMediaClient {
             rt_handle: None,
             events: Arc::new(Mutex::new(VecDeque::new())),
             video_frames: Arc::new(Mutex::new(VecDeque::new())),
+            video_notify: Arc::new(AtomicI32::new(-1)),
             muted: false,
             deafened: false,
             video: false,
@@ -150,6 +165,7 @@ impl VoxMediaClient {
         let events = self.events.clone();
         let events_thread = self.events.clone();
         let video_frames = self.video_frames.clone();
+        let video_notify = self.video_notify.clone();
         let handle = std::thread::spawn(move || {
             let rt = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt,
@@ -159,7 +175,7 @@ impl VoxMediaClient {
                 }
             };
             rt.block_on(async move {
-                state::run_media_loop(cmd_rx, cancel, events, video_frames).await;
+                state::run_media_loop(cmd_rx, cancel, events, video_frames, video_notify).await;
             });
         });
 
@@ -235,6 +251,13 @@ impl VoxMediaClient {
     /// Set per-user output volume. 0.0 = silence, 1.0 = unity, 2.0 = 2x gain.
     fn set_user_volume(&self, user_id: u32, volume: f32) -> PyResult<()> {
         self.send_cmd(MediaCommand::SetUserVolume { user_id, volume })
+    }
+
+    /// Set a file descriptor that receives a write(1 byte) whenever a video
+    /// frame is pushed.  Pass -1 to disable.  Used with QSocketNotifier on
+    /// the read end of an os.pipe() for zero-latency frame delivery.
+    fn set_video_notify_fd(&self, fd: i32) {
+        self.video_notify.store(fd, Ordering::Relaxed);
     }
 
     /// Poll for the next decoded video frame.

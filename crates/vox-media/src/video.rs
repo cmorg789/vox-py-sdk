@@ -1,5 +1,6 @@
 //! Video capture via nokhwa — camera capture and pixel format conversion.
 
+use crate::{push_video_frame, VideoFrameOutput, VideoFrameQueue, VideoNotifyFd};
 use nokhwa::pixel_format::RgbFormat;
 use nokhwa::utils::{
     CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType, Resolution,
@@ -59,13 +60,15 @@ impl Drop for CameraStopHandle {
 /// if the consumer can't keep up.
 pub fn start_camera_capture(
     config: CameraConfig,
+    preview_queue: VideoFrameQueue,
+    preview_notify: VideoNotifyFd,
 ) -> Result<(mpsc::Receiver<CapturedFrame>, CameraStopHandle), String> {
     let (tx, rx) = mpsc::channel(4);
     let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = stop.clone();
 
     std::thread::spawn(move || {
-        if let Err(e) = camera_thread(config, tx, stop_clone) {
+        if let Err(e) = camera_thread(config, tx, stop_clone, preview_queue, preview_notify) {
             tracing::error!("Camera thread exited with error: {e}");
         }
     });
@@ -77,18 +80,46 @@ fn camera_thread(
     config: CameraConfig,
     tx: mpsc::Sender<CapturedFrame>,
     stop: Arc<AtomicBool>,
+    preview_queue: VideoFrameQueue,
+    preview_notify: VideoNotifyFd,
 ) -> Result<(), String> {
     let index = CameraIndex::Index(0);
-    let format = CameraFormat::new(
-        Resolution::new(config.width, config.height),
-        FrameFormat::MJPEG,
-        config.fps,
-    );
-    let requested =
-        RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(format));
+    let native = config.width == 0 || config.height == 0;
 
-    let mut camera =
-        Camera::new(index, requested).map_err(|e| format!("Camera open: {e}"))?;
+    // Build list of formats to try.  When "native" (0×0), skip Closest and
+    // go straight to AbsoluteHighestResolution.
+    let res = Resolution::new(config.width, config.height);
+    let formats_to_try: Vec<Option<FrameFormat>> = if native {
+        vec![None]
+    } else {
+        vec![Some(FrameFormat::NV12), Some(FrameFormat::MJPEG), None]
+    };
+
+    let mut camera = None;
+    let mut last_err = String::new();
+    for fmt in &formats_to_try {
+        let requested = match fmt {
+            Some(ff) => {
+                let cf = CameraFormat::new(res, *ff, config.fps);
+                RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(cf))
+            }
+            None => RequestedFormat::new::<RgbFormat>(
+                RequestedFormatType::AbsoluteHighestResolution,
+            ),
+        };
+        match Camera::new(index.clone(), requested) {
+            Ok(cam) => {
+                tracing::info!("Camera opened with format {:?}", fmt);
+                camera = Some(cam);
+                break;
+            }
+            Err(e) => {
+                tracing::debug!("Camera format {:?} failed: {e}", fmt);
+                last_err = format!("{e}");
+            }
+        }
+    }
+    let mut camera = camera.ok_or_else(|| format!("Camera open: {last_err}"))?;
     camera
         .open_stream()
         .map_err(|e| format!("Camera stream: {e}"))?;
@@ -116,8 +147,18 @@ fn camera_thread(
         };
 
         let rgb = decoded.as_raw();
-        let (y, u, v) = rgb_to_i420(rgb, w as usize, h as usize);
         let rgba = rgb_to_rgba(rgb);
+
+        // Push local preview directly from the camera thread (user_id=0)
+        // so it bypasses the encoding pipeline entirely.
+        push_video_frame(&preview_queue, &preview_notify, VideoFrameOutput {
+            user_id: 0,
+            width: w,
+            height: h,
+            rgba: rgba.clone(),
+        });
+
+        let (y, u, v) = rgb_to_i420(rgb, w as usize, h as usize);
 
         let captured = CapturedFrame {
             width: w,

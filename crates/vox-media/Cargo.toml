@@ -22,3 +22,4 @@ tokio-util = "0.7"
 nokhwa = { version = "0.10", features = ["input-native"] }
 rav1e = { version = "0.8", default-features = false, features = ["asm"] }
 dav1d = "0.11"
+libc = "0.2"
